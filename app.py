@@ -7,15 +7,74 @@ import os
 from dotenv import load_dotenv
 import pandas as pd
 from pathlib import Path
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from google.auth.transport.requests import Request
+from googleapiclient.discovery import build
+import pickle
 
 # Load environment variables
 load_dotenv()
 
-date = datetime.datetime.strptime(sys.argv[1], '%m-%d-%y').date()
+# Parse date with flexible year format
+date_str = sys.argv[1]
+try:
+    # Try 4-digit year format first
+    date = datetime.datetime.strptime(date_str, '%m-%d-%Y').date()
+except ValueError:
+    # If that fails, try 2-digit year format
+    date = datetime.datetime.strptime(date_str, '%m-%d-%y').date()
 
 # Get API key from environment variable
 api_key = os.getenv('MTECH_API_KEY')
 mtechAPIUrl = f'https://www.clubmtech.com/cmtapi/teetimes/?apikey={api_key}&TheDate={date.month}-{date.day}-{date.year}'
+
+# Gmail API setup
+SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
+
+def test_gmail_connection():
+    """Test Gmail API connection and list recent emails."""
+    creds = None
+    # The file token.json stores the user's access and refresh tokens
+    if os.path.exists('token.json'):
+        with open('token.json', 'rb') as token:
+            creds = pickle.load(token)
+    
+    # If there are no (valid) credentials available, let the user log in.
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file(
+                'credentials.json', SCOPES)
+            creds = flow.run_local_server(port=0)
+        # Save the credentials for the next run
+        with open('token.json', 'wb') as token:
+            pickle.dump(creds, token)
+
+    try:
+        # Create Gmail API service
+        service = build('gmail', 'v1', credentials=creds)
+        
+        # Get list of messages
+        results = service.users().messages().list(userId='nhcchandicapcheck@gmail.com', maxResults=5).execute()
+        messages = results.get('messages', [])
+
+        if not messages:
+            print('No messages found.')
+            return
+        
+        print('Recent emails:')
+        for message in messages:
+            msg = service.users().messages().get(userId='nhcchandicapcheck@gmail.com', id=message['id']).execute()
+            headers = msg['payload']['headers']
+            subject = next(h['value'] for h in headers if h['name'] == 'Subject')
+            print(f'- {subject}')
+        
+        return True
+    except Exception as e:
+        print(f'An error occurred: {e}')
+        return False
 
 def removeAfterCharacter(text, char):
     index = text.find(char)
@@ -109,6 +168,10 @@ def update_excel_report(report_file, golfer_list):
     print(f"Updated report at {report_file}")
 
 if __name__ == "__main__":
+    # Test Gmail connection first
+    print("Testing Gmail connection...")
+    test_gmail_connection()
+    
     noGHIN = []
     noPost = []
     tee_data = getMTechData()

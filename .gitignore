@@ -6,3 +6,6 @@ __pycache__/
 .env
 usgaReports/
 reports/
+credentials.json
+token.json
+service-account.json
