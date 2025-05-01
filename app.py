@@ -12,6 +12,7 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 import pickle
+import time
 
 # Load environment variables
 load_dotenv()
@@ -35,6 +36,9 @@ SCOPES = [
     'https://www.googleapis.com/auth/spreadsheets'
 ]
 
+# Add at the top with other global variables
+cached_sheets = {}
+
 def get_google_creds():
     """Get and refresh Google credentials."""
     creds = None
@@ -55,18 +59,24 @@ def get_google_creds():
 
 def update_google_sheet(sheet_id, sheet_name, golfer_list):
     """Update Google Sheet with golfer data."""
+    global cached_sheets
     creds = get_google_creds()
     service = build('sheets', 'v4', credentials=creds)
     today_date = datetime.date.strftime(date, "%m-%d-%y")
     
     try:
-        # Get existing data
-        result = service.spreadsheets().values().get(
-            spreadsheetId=sheet_id,
-            range=f'{sheet_name}!A:C'
-        ).execute()
-        
-        existing_data = result.get('values', [])
+        # Use cached data if available
+        if sheet_name in cached_sheets:
+            existing_data = cached_sheets[sheet_name]
+        else:
+            # Get existing data
+            result = service.spreadsheets().values().get(
+                spreadsheetId=sheet_id,
+                range=f'{sheet_name}!A:C'
+            ).execute()
+            existing_data = result.get('values', [])
+            cached_sheets[sheet_name] = existing_data
+            
         if not existing_data:
             existing_data = [['Name', 'Count', 'Dates']]
         
@@ -277,44 +287,146 @@ def normalize_name(name):
     """Normalize name by removing extra spaces and special characters"""
     return ' '.join(name.strip().lower().split())
 
-def check_roster(golfer_name):
-    """
-    Check if golfer exists in roster and has a GHIN number
-    Returns: (exists_in_roster, has_ghin)
-    """
+def cache_sheet_data():
+    """Cache all sheet data at startup to avoid rate limits"""
     creds = get_google_creds()
     service = build('sheets', 'v4', credentials=creds)
-    roster_id = os.getenv('ROSTER_SHEET_ID')
     
+    # Cache all needed data
     try:
+        # Get excluded dates
+        result = service.spreadsheets().values().get(
+            spreadsheetId=os.getenv('GOOGLE_SHEET_ID'),
+            range='ExcludedDates!A:C'
+        ).execute()
+        cache_sheet_data.excluded_dates = result.get('values', [])
+        
         # Get roster data
         result = service.spreadsheets().values().get(
-            spreadsheetId=roster_id,
-            range='Sheet1!A:B'  # Assuming roster is in first sheet
+            spreadsheetId=os.getenv('ROSTER_SHEET_ID'),
+            range='Sheet1!A:B'
+        ).execute()
+        cache_sheet_data.roster = result.get('values', [])
+        
+        return True
+    except Exception as e:
+        print(f"Error caching sheet data: {e}")
+        return False
+
+def get_sheet(sheet_name):
+    """Get a specific sheet from the Google Spreadsheet with caching."""
+    global cached_sheets
+    
+    # Return cached data if available
+    if sheet_name in cached_sheets:
+        return cached_sheets[sheet_name]
+        
+    try:
+        creds = get_google_creds()
+        service = build('sheets', 'v4', credentials=creds)
+        
+        # Get the sheet data
+        result = service.spreadsheets().values().get(
+            spreadsheetId=os.getenv('GOOGLE_SHEET_ID'),
+            range=f'{sheet_name}!A:C'
         ).execute()
         
-        roster_data = result.get('values', [])
-        if not roster_data:
-            return False, False
-            
-        # Normalize golfer name for comparison
-        normalized_golfer = normalize_name(golfer_name)
-        
-        for row in roster_data:
-            if not row[0]:  # Skip empty names
-                continue
-                
-            if normalize_name(row[0]) == normalized_golfer:
-                has_ghin = len(row) > 1 and row[1] and row[1].strip()
-                return True, has_ghin
-                
-        return False, False
-        
+        # Cache the result
+        cached_sheets[sheet_name] = result.get('values', [])
+        return cached_sheets[sheet_name]
     except Exception as e:
-        print(f"Error checking roster: {e}")
+        return None
+
+def get_excluded_times(date_str):
+    excluded_times = []
+    try:
+        # Get the ExcludedDates sheet
+        values = get_sheet('ExcludedDates')
+        if not values:
+            return excluded_times
+
+        # Skip header row
+        for row in values[1:]:
+            if len(row) >= 1 and row[0] == date_str:
+                # If there are no times specified, exclude the entire day
+                if len(row) == 1 or (len(row) > 1 and not row[1].strip() and (len(row) <= 2 or not row[2].strip())):
+                    excluded_times.append((None, None))
+                else:
+                    start_time = row[1] if len(row) > 1 and row[1] else None
+                    end_time = row[2] if len(row) > 2 and row[2] else None
+                    excluded_times.append((start_time, end_time))
+    except Exception as e:
+        return excluded_times
+    return excluded_times
+
+def check_roster(golfer_name):
+    """Check if golfer exists in roster and has a GHIN number"""
+    if not hasattr(cache_sheet_data, 'roster'):
         return False, False
+        
+    normalized_golfer = normalize_name(golfer_name)
+    
+    for row in cache_sheet_data.roster[1:]:  # Skip header
+        if not row[0]:  # Skip empty names
+            continue
+            
+        if normalize_name(row[0]) == normalized_golfer:
+            has_ghin = len(row) > 1 and row[1] and row[1].strip()
+            return True, has_ghin
+            
+    return False, False
+
+def parse_mtech_time(time_str):
+    try:
+        parsed_time = datetime.datetime.strptime(time_str, '%I:%M %p').time()
+        return parsed_time
+    except Exception as e:
+        return None
+
+def is_time_excluded(tee_time):
+    try:
+        parsed_time = parse_mtech_time(tee_time)
+        if not parsed_time:
+            return False
+
+        date_str = get_current_date()
+        excluded_times = get_excluded_times(date_str)
+
+        for start_time_str, end_time_str in excluded_times:
+            # If both times are None, it's a full day exclusion
+            if start_time_str is None and end_time_str is None:
+                return True
+
+            if start_time_str:
+                start_time = datetime.datetime.strptime(start_time_str, '%H:%M').time()
+            else:
+                start_time = None
+
+            if end_time_str:
+                end_time = datetime.datetime.strptime(end_time_str, '%H:%M').time()
+            else:
+                end_time = None
+
+            # Check if the tee time falls within the exclusion period
+            if (start_time is None or parsed_time >= start_time) and \
+               (end_time is None or parsed_time <= end_time):
+                return True
+
+        return False
+    except Exception as e:
+        return False
+
+def get_current_date():
+    """Get the current date in the format used in the ExcludedDates sheet"""
+    return date.strftime("%m-%d-%y")  # Make sure we're using the right format
 
 if __name__ == "__main__":
+    # Cache sheet data at startup
+    print("Caching sheet data...")
+    if not cache_sheet_data():
+        print("Failed to cache sheet data. Exiting.")
+        sys.exit(1)
+    
     # Test Gmail connection first
     print("Testing Gmail connection...")
     test_gmail_connection()
@@ -332,16 +444,19 @@ if __name__ == "__main__":
     for golfer in tee_data:
         # Check if this golfer's value appears elsewhere in the data
         if len(golfer) > 1 and all_golfer_values.count(golfer[1]) > 1:
-            if golfer[3] != "":
-                if not checkPosting(golfer[3]): 
-                    noPost.append(removeAfterCharacter(golfer[2], '-'))
-            elif golfer[3] == "":
-                # Check roster before adding to noGHIN
-                golfer_name = removeAfterCharacter(golfer[2], "-")
-                exists_in_roster, has_ghin = check_roster(golfer_name)
-                
-                if not exists_in_roster or not has_ghin:
-                    noGHIN.append(golfer_name)
+            # Check if tee time should be excluded
+            if len(golfer) > 1:
+                if not is_time_excluded(golfer[1]):
+                    if golfer[3] != "":
+                        if not checkPosting(golfer[3]): 
+                            noPost.append(removeAfterCharacter(golfer[2], '-'))
+                    elif golfer[3] == "":
+                        # Check roster before adding to noGHIN
+                        golfer_name = removeAfterCharacter(golfer[2], "-")
+                        exists_in_roster, has_ghin = check_roster(golfer_name)
+                        
+                        if not exists_in_roster or not has_ghin:
+                            noGHIN.append(golfer_name)
     
     print('The following golfers did not post: ', end='')
     if noPost:
@@ -365,4 +480,5 @@ if __name__ == "__main__":
     
     # Update both sheets
     update_google_sheet(SPREADSHEET_ID, 'NoPost', noPost)
+    time.sleep(1)  # Add 1 second delay between updates
     update_google_sheet(SPREADSHEET_ID, 'NoGHIN', noGHIN)
