@@ -47,6 +47,8 @@ pip install -r requirements.txt
 Create a `.env` file in the project root with:
 ```
 MTECH_API_KEY=your_mtech_api_key
+GOOGLE_SHEET_ID=your_spreadsheet_id
+ROSTER_SHEET_ID=your_roster_spreadsheet_id
 ```
 
 5. Set up Gmail API:
@@ -84,3 +86,12 @@ python -m pytest tests/
 
 ### To Do List
 * Publish the report of non-posters outside of terminal
+
+## Setup Instructions
+
+1. Create a `.env` file with your API keys:
+```
+MTECH_API_KEY=your_mtech_api_key
+GOOGLE_SHEET_ID=your_spreadsheet_id
+ROSTER_SHEET_ID=your_roster_spreadsheet_id
+```
