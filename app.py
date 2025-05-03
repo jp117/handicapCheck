@@ -13,6 +13,8 @@ from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 import pickle
 import time
+from email.mime.text import MIMEText
+import base64
 
 # Load environment variables
 load_dotenv()
@@ -33,6 +35,7 @@ mtechAPIUrl = f'https://www.clubmtech.com/cmtapi/teetimes/?apikey={api_key}&TheD
 # Update SCOPES to include Google Sheets
 SCOPES = [
     'https://www.googleapis.com/auth/gmail.readonly',
+    'https://www.googleapis.com/auth/gmail.send',
     'https://www.googleapis.com/auth/spreadsheets'
 ]
 
@@ -228,7 +231,6 @@ def get_email_attachment(search_date):
                 
                 # Create a temporary file to store the Excel data
                 import tempfile
-                import base64
                 
                 temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx')
                 temp_file.write(base64.urlsafe_b64decode(file_data))
@@ -304,7 +306,7 @@ def cache_sheet_data():
         # Get roster data
         result = service.spreadsheets().values().get(
             spreadsheetId=os.getenv('ROSTER_SHEET_ID'),
-            range='Sheet1!A:B'
+            range='Sheet1!A:E'
         ).execute()
         cache_sheet_data.roster = result.get('values', [])
         
@@ -420,6 +422,51 @@ def get_current_date():
     """Get the current date in the format used in the ExcludedDates sheet"""
     return date.strftime("%m-%d-%y")  # Make sure we're using the right format
 
+def get_roster_info(golfer_name):
+    """Return (exists, has_ghin, email, gender, member_number) for a golfer."""
+    if not hasattr(cache_sheet_data, 'roster'):
+        return False, False, None, None, None
+
+    normalized_golfer = normalize_name(golfer_name)
+    for row in cache_sheet_data.roster[1:]:  # Skip header
+        if not row[0]:
+            continue
+        if normalize_name(row[0]) == normalized_golfer:
+            has_ghin = len(row) > 1 and row[1] and row[1].strip()
+            email = row[2].strip() if len(row) > 2 and row[2] else None
+            gender = row[3].strip().upper() if len(row) > 3 and row[3] else None
+            member_number = row[4].strip() if len(row) > 4 and row[4] else None
+            return True, has_ghin, email, gender, member_number
+    return False, False, None, None, None
+
+def send_email(subject, body, to_email):
+    creds = get_google_creds()
+    service = build('gmail', 'v1', credentials=creds)
+    message = MIMEText(body)
+    message['to'] = to_email
+    message['from'] = "me"
+    message['subject'] = subject
+    raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
+    message_body = {'raw': raw}
+    service.users().messages().send(userId="me", body=message_body).execute()
+
+def build_no_post_email(men, women, date_str):
+    lines = []
+    lines.append(f"The men that didn't post on {date_str} are:")
+    if men:
+        for name, email, member_number in men:
+            lines.append(f"- {name} | {email or 'No email'} | {member_number or 'No member #'}")
+    else:
+        lines.append("None")
+    lines.append("")
+    lines.append(f"The women that didn't post on {date_str} are:")
+    if women:
+        for name, email, member_number in women:
+            lines.append(f"- {name} | {email or 'No email'} | {member_number or 'No member #'}")
+    else:
+        lines.append("None")
+    return "\n".join(lines)
+
 if __name__ == "__main__":
     # Cache sheet data at startup
     print("Caching sheet data...")
@@ -441,22 +488,41 @@ if __name__ == "__main__":
     # Collect all golfer[1] values to check for duplicates
     all_golfer_values = [g[1] for g in tee_data if len(g) > 1]
     
+    men_no_post = []
+    women_no_post = []
+
+    checked_golfers = set()
+
     for golfer in tee_data:
-        # Check if this golfer's value appears elsewhere in the data
+        # Use GHIN if available, otherwise fallback to name
+        unique_id = golfer[3] if golfer[3] else removeAfterCharacter(golfer[2], '-')
+        if unique_id in checked_golfers:
+            continue
+        checked_golfers.add(unique_id)
+
         if len(golfer) > 1 and all_golfer_values.count(golfer[1]) > 1:
-            # Check if tee time should be excluded
-            if len(golfer) > 1:
-                if not is_time_excluded(golfer[1]):
-                    if golfer[3] != "":
-                        if not checkPosting(golfer[3]): 
-                            noPost.append(removeAfterCharacter(golfer[2], '-'))
-                    elif golfer[3] == "":
-                        # Check roster before adding to noGHIN
-                        golfer_name = removeAfterCharacter(golfer[2], "-")
-                        exists_in_roster, has_ghin = check_roster(golfer_name)
-                        
-                        if not exists_in_roster or not has_ghin:
-                            noGHIN.append(golfer_name)
+            if not is_time_excluded(golfer[1]):
+                if golfer[3] != "":
+                    if not checkPosting(golfer[3]):
+                        name = removeAfterCharacter(golfer[2], '-')
+                        noPost.append(name)
+                        exists, has_ghin, email, gender, member_number = get_roster_info(name)
+                        print(f"DEBUG: {name} | exists: {exists} | gender: '{gender}' | email: {email} | member#: {member_number}")
+                        gender = (gender or '').strip().upper()
+                        if gender == "M":
+                            men_no_post.append((name, email, member_number))
+                        elif gender == "F":
+                            women_no_post.append((name, email, member_number))
+                        else:
+                            # Optionally, handle unknown gender
+                            pass
+                elif golfer[3] == "":
+                    # Check roster before adding to noGHIN
+                    golfer_name = removeAfterCharacter(golfer[2], "-")
+                    exists_in_roster, has_ghin = check_roster(golfer_name)
+                    
+                    if not exists_in_roster or not has_ghin:
+                        noGHIN.append(golfer_name)
     
     print('The following golfers did not post: ', end='')
     if noPost:
@@ -482,3 +548,12 @@ if __name__ == "__main__":
     update_google_sheet(SPREADSHEET_ID, 'NoPost', noPost)
     time.sleep(1)  # Add 1 second delay between updates
     update_google_sheet(SPREADSHEET_ID, 'NoGHIN', noGHIN)
+
+    date_str = date.strftime("%m-%d-%y")
+    email_body = build_no_post_email(men_no_post, women_no_post, date_str)
+    send_email(
+        subject=f"Non-Posters for {date_str}",
+        body=email_body,
+        to_email="John.Paradise117@gmail.com"
+    )
+    print("Summary email sent.")

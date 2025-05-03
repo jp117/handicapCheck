@@ -122,3 +122,9 @@ Replace `mm-dd-yy` with the date you want to check (e.g., `04-29-25`).
 **Note:**  
 - Make sure your `.env`, `credentials.json`, and `token.json` are not tracked in git.
 - If you hit Google Sheets API rate limits, wait a minute and try again.
+
+SCOPES = [
+    'https://www.googleapis.com/auth/gmail.readonly',
+    'https://www.googleapis.com/auth/spreadsheets',
+    'https://www.googleapis.com/auth/gmail.send'
+]
