@@ -1,4 +1,6 @@
-# Confirm NHCC golfers posted on days they played
+# Handicap Check
+
+Confirm NHCC golfers posted scores on days they played.
 
 ## Project Structure
 ```
@@ -19,8 +21,9 @@ handicapCheck/
 ## Setup
 
 ### Prerequisites
-- Python 3.12 or higher
-- Git
+- Python 3.9 or higher
+- Docker (recommended for running the app)
+- Google Cloud project with Gmail and Google Sheets API enabled
 
 ### Installation
 
@@ -30,12 +33,10 @@ git clone <repository-url>
 cd handicapCheck
 ```
 
-2. Create and activate a virtual environment:
+2. Create and activate a virtual environment (optional but recommended):
 ```bash
-python -m venv venv
-source venv/Scripts/activate  # On Windows
-# OR
-source venv/bin/activate     # On Unix/MacOS
+python3 -m venv venv
+source venv/bin/activate
 ```
 
 3. Install dependencies:
@@ -51,47 +52,73 @@ GOOGLE_SHEET_ID=your_spreadsheet_id
 ROSTER_SHEET_ID=your_roster_spreadsheet_id
 ```
 
-5. Set up Gmail API:
+5. Set up Google API:
 - Go to Google Cloud Console
 - Create a new project
-- Enable Gmail API
+- Enable Gmail API and Google Sheets API
 - Create OAuth 2.0 credentials
 - Download credentials and save as `credentials.json` in project root
+- Run the provided `auth.py` script locally to generate `token.json`
 
-### Obtain USGA Reports
-* Download the report from the "Played / Posted Report (Players)" from USGA Admin portal
-* Rename the file to `usga-mm-dd-yyyy.xlsx`
-* Move it to the folder "usgaReports"
+### Google Sheets Setup
 
-### Running the Application
+- In your main Google Sheet (GOOGLE_SHEET_ID), create the following tabs:
+    - `NoPost` — for tracking golfers who didn't post scores
+    - `NoGHIN` — for tracking golfers without GHIN numbers
+    - `ExcludedDates` — for specifying dates/times to exclude from posting checks
+
+- In your roster Google Sheet (ROSTER_SHEET_ID), create:
+    - `Sheet1` — Column A: Name, Column B: GHIN
+
+#### ExcludedDates Sheet Format
+
+| Date      | Start Time | End Time |
+|-----------|------------|----------|
+| 04-29-25  |            |          |  ← Exclude entire day
+| 04-30-25  | 07:00      | 09:00    |  ← Exclude 7-9 AM
+| 05-01-25  | 13:00      |          |  ← Exclude after 1 PM
+| 05-02-25  |            | 13:00    |  ← Exclude before 1 PM
+
+- Date format: `MM-DD-YY`
+- Time format: `HH:MM` (24-hour, no seconds)
+
+## Running the Application
+
+### With Docker (recommended)
+
+1. Build the Docker image:
 ```bash
-python app.py mm-dd-yy
+docker build -t handicapcheck .
 ```
 
-## Development
-
-### Adding New Features
-1. Create new modules in appropriate directories under `src/`
-2. Update requirements.txt if new dependencies are added
-3. Test changes locally
-4. Submit pull request
-
-### Testing
+2. Run the script:
 ```bash
-python -m pytest tests/
+docker run \
+  -v $(pwd)/credentials.json:/app/credentials.json \
+  -v $(pwd)/token.json:/app/token.json \
+  --env-file .env \
+  handicapcheck mm-dd-yy
 ```
+Replace `mm-dd-yy` with the date you want to check (e.g., `04-29-25`).
 
-## License
-[Your License Here]
+### How it Works
 
-### To Do List
-* Publish the report of non-posters outside of terminal
+- Fetches tee times from MTech API
+- Downloads USGA report from email (sent the day after play)
+- Compares players who played against those who posted
+- Checks roster for GHIN numbers
+- Skips dates/times specified in the ExcludedDates sheet
+- Updates Google Sheets with results:
+    - `NoPost` tab: golfers who didn't post scores
+    - `NoGHIN` tab: golfers without GHIN numbers
 
-## Setup Instructions
+## No Longer Needed
 
-1. Create a `.env` file with your API keys:
-```
-MTECH_API_KEY=your_mtech_api_key
-GOOGLE_SHEET_ID=your_spreadsheet_id
-ROSTER_SHEET_ID=your_roster_spreadsheet_id
-```
+- The `reports/` and `usgaReports/` folders are no longer used.
+- All reporting and data storage is now handled via Google Sheets and email.
+
+---
+
+**Note:**  
+- Make sure your `.env`, `credentials.json`, and `token.json` are not tracked in git.
+- If you hit Google Sheets API rate limits, wait a minute and try again.
