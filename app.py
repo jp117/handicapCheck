@@ -5,7 +5,6 @@ import csv
 import openpyxl # type: ignore
 import os
 from dotenv import load_dotenv
-import pandas as pd
 from pathlib import Path
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -507,7 +506,6 @@ if __name__ == "__main__":
                         name = removeAfterCharacter(golfer[2], '-')
                         noPost.append(name)
                         exists, has_ghin, email, gender, member_number = get_roster_info(name)
-                        print(f"DEBUG: {name} | exists: {exists} | gender: '{gender}' | email: {email} | member#: {member_number}")
                         gender = (gender or '').strip().upper()
                         if gender == "M":
                             men_no_post.append((name, email, member_number))
