@@ -453,6 +453,17 @@ def build_no_post_email(men, women, date_str):
         lines.append("None")
     return "\n".join(lines)
 
+def get_roster_name_by_ghin(ghin_number):
+    """Look up a golfer's name in the roster by their GHIN number."""
+    if not hasattr(cache_sheet_data, 'roster'):
+        return None
+        
+    ghin_number = str(ghin_number).strip()
+    for row in cache_sheet_data.roster[1:]:  # Skip header
+        if len(row) > 1 and row[1] and str(row[1]).strip() == ghin_number:
+            return row[0]  # Return name from column A
+    return None
+
 if __name__ == "__main__":
     # Cache sheet data at startup
     print("Caching sheet data...")
@@ -489,19 +500,24 @@ if __name__ == "__main__":
 
         if len(golfer) > 1 and all_golfer_values.count(golfer[1]) > 1:
             if not is_time_excluded(golfer[1]):
+                # Get the canonical name from roster if GHIN exists
+                canonical_name = None
+                if golfer[3]:  # If GHIN exists in MTech data
+                    canonical_name = get_roster_name_by_ghin(golfer[3])
+                if not canonical_name:  # Fallback to MTech name if no GHIN or not found in roster
+                    canonical_name = removeAfterCharacter(golfer[2], '-')
+                
                 if golfer[3] != "":
                     if checkPosting(golfer[3]):
-                        name = removeAfterCharacter(golfer[2], '-')
-                        posted_golfers.append(name)
+                        posted_golfers.append(canonical_name)
                     else:
-                        name = removeAfterCharacter(golfer[2], '-')
-                        noPost.append(name)
-                        exists, has_ghin, email, gender, member_number = get_roster_info(name)
+                        noPost.append(canonical_name)
+                        exists, has_ghin, email, gender, member_number = get_roster_info(canonical_name)
                         gender = (gender or '').strip().upper()
                         if gender == "M":
-                            men_no_post.append((name, email, member_number))
+                            men_no_post.append((canonical_name, email, member_number))
                         elif gender == "F":
-                            women_no_post.append((name, email, member_number))
+                            women_no_post.append((canonical_name, email, member_number))
                         else:
                             pass
                 elif golfer[3] == "":
