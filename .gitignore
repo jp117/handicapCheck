@@ -9,3 +9,4 @@ reports/
 credentials.json
 token.json
 service-account.json
+venv/
