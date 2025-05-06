@@ -117,11 +117,9 @@ def update_google_sheet(sheet_id, sheet_name, golfer_list):
         service.spreadsheets().values().update(
             spreadsheetId=sheet_id,
             range=f'{sheet_name}!A1',
-            valueInputOption='RAW',
+            valueInputOption='USER_ENTERED',
             body={'values': final_data}
         ).execute()
-        
-        print(f"Updated Google Sheet: {sheet_name}")
         
     except Exception as e:
         print(f"Error updating Google Sheet: {e}")
@@ -155,15 +153,7 @@ def test_gmail_connection():
         messages = results.get('messages', [])
 
         if not messages:
-            print('No messages found.')
-            return
-        
-        print('Recent emails:')
-        for message in messages:
-            msg = service.users().messages().get(userId='nhcchandicapcheck@gmail.com', id=message['id']).execute()
-            headers = msg['payload']['headers']
-            subject = next(h['value'] for h in headers if h['name'] == 'Subject')
-            print(f'- {subject}')
+            return True
         
         return True
     except Exception as e:
@@ -197,8 +187,6 @@ def get_email_attachment(search_date):
     # Format date for email search (next day after golf date)
     email_date = search_date + datetime.timedelta(days=1)
     search_query = f'from:reporting@ghin.com subject:"Auto-Generated Scheduled Report - Played / Posted Report (Player Rounds)" after:{email_date.strftime("%Y/%m/%d")} before:{(email_date + datetime.timedelta(days=1)).strftime("%Y/%m/%d")}'
-    
-    print(f"Searching for email with query: {search_query}")
     
     try:
         # Search for the email
@@ -235,7 +223,6 @@ def get_email_attachment(search_date):
                 temp_file.write(base64.urlsafe_b64decode(file_data))
                 temp_file.close()
                 
-                print(f"Successfully downloaded XLSX attachment")
                 return temp_file.name
                 
         raise Exception("No XLSX attachment found in email")
@@ -489,6 +476,7 @@ if __name__ == "__main__":
     
     men_no_post = []
     women_no_post = []
+    posted_golfers = []
 
     checked_golfers = set()
 
@@ -502,7 +490,10 @@ if __name__ == "__main__":
         if len(golfer) > 1 and all_golfer_values.count(golfer[1]) > 1:
             if not is_time_excluded(golfer[1]):
                 if golfer[3] != "":
-                    if not checkPosting(golfer[3]):
+                    if checkPosting(golfer[3]):
+                        name = removeAfterCharacter(golfer[2], '-')
+                        posted_golfers.append(name)
+                    else:
                         name = removeAfterCharacter(golfer[2], '-')
                         noPost.append(name)
                         exists, has_ghin, email, gender, member_number = get_roster_info(name)
@@ -512,28 +503,29 @@ if __name__ == "__main__":
                         elif gender == "F":
                             women_no_post.append((name, email, member_number))
                         else:
-                            # Optionally, handle unknown gender
                             pass
                 elif golfer[3] == "":
-                    # Check roster before adding to noGHIN
                     golfer_name = removeAfterCharacter(golfer[2], "-")
-                    exists_in_roster, has_ghin = check_roster(golfer_name)
-                    
-                    if not exists_in_roster or not has_ghin:
+                    exists_in_roster, has_ghin, email, gender, member_number = get_roster_info(golfer_name)
+                    if exists_in_roster and has_ghin:
+                        for row in cache_sheet_data.roster[1:]:
+                            if normalize_name(row[0]) == normalize_name(golfer_name):
+                                roster_ghin = row[1].strip()
+                                break
+                        else:
+                            roster_ghin = None
+                        if roster_ghin and checkPosting(roster_ghin):
+                            posted_golfers.append(golfer_name)
+                        else:
+                            noPost.append(golfer_name)
+                            gender = (gender or '').strip().upper()
+                            if gender == "M":
+                                men_no_post.append((golfer_name, email, member_number))
+                            elif gender == "F":
+                                women_no_post.append((golfer_name, email, member_number))
+                    else:
                         noGHIN.append(golfer_name)
     
-    print('The following golfers did not post: ', end='')
-    if noPost:
-        print(', '.join(noPost) + '.')
-    else:
-        print('None.')
-    
-    print('The following golfers have no GHIN: ', end='')
-    if noGHIN:
-        print(', '.join(noGHIN) + '.')
-    else:
-        print('None.')
-        
     print('Handicap report done for ' + datetime.date.strftime(date, "%m-%d-%y"))
     
     # Make sure we have a reports directory
@@ -555,3 +547,61 @@ if __name__ == "__main__":
         to_email="John.Paradise117@gmail.com"
     )
     print("Summary email sent.")
+
+    # Update PostPercentage sheet
+    def update_post_percentage(sheet_id, posted_golfers, no_post_golfers):
+        creds = get_google_creds()
+        service = build('sheets', 'v4', credentials=creds)
+        sheet_name = 'PostPercentage'
+        try:
+            result = service.spreadsheets().values().get(
+                spreadsheetId=sheet_id,
+                range=f'{sheet_name}!A:F'
+            ).execute()
+            existing_data = result.get('values', [])
+            if not existing_data:
+                existing_data = [['Name', 'Rounds Posted', 'Rounds Not Posted', 'Other', 'Pct All', 'Pct Played']]
+            data_dict = {row[0]: row for row in existing_data[1:] if len(row) > 0}
+            # Update posted
+            for name in posted_golfers:
+                if name in data_dict:
+                    row = data_dict[name]
+                    # Ensure row has at least 3 columns
+                    while len(row) < 6:
+                        row.append('')
+                    # Increment posted count (col B)
+                    row[1] = str(int(row[1]) + 1) if len(row) > 1 and row[1].isdigit() else '1'
+                else:
+                    data_dict[name] = [name, '1', '', '', '', '']
+            # Update not posted
+            for name in no_post_golfers:
+                if name in data_dict:
+                    row = data_dict[name]
+                    # Ensure row has at least 3 columns
+                    while len(row) < 6:
+                        row.append('')
+                    # Increment not posted count (col C)
+                    row[2] = str(int(row[2]) + 1) if len(row) > 2 and row[2].isdigit() else '1'
+                else:
+                    data_dict[name] = [name, '', '1', '', '', '']
+            # Prepare final data
+            final_data = [existing_data[0]]
+            for row in data_dict.values():
+                # Ensure row has at least 6 columns
+                while len(row) < 6:
+                    row.append('')
+                # Row number in sheet is index+2 (header is row 1)
+                row_idx = len(final_data) + 1
+                row[4] = f"=B{row_idx}/(B{row_idx}+C{row_idx}+D{row_idx})"
+                row[5] = f"=B{row_idx}/(B{row_idx}+C{row_idx})"
+                final_data.append(row)
+            # Update sheet
+            service.spreadsheets().values().update(
+                spreadsheetId=sheet_id,
+                range=f'{sheet_name}!A1',
+                valueInputOption='USER_ENTERED',
+                body={'values': final_data}
+            ).execute()
+        except Exception as e:
+            print(f"Error updating {sheet_name}: {e}")
+    update_post_percentage(SPREADSHEET_ID, posted_golfers, noPost)
