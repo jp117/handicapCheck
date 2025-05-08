@@ -94,6 +94,7 @@ docker build -t handicapcheck .
 2. Run the script:
 ```bash
 docker run \
+  --rm \
   -v $(pwd)/credentials.json:/app/credentials.json \
   -v $(pwd)/token.json:/app/token.json \
   --env-file .env \
