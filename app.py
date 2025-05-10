@@ -14,6 +14,9 @@ import pickle
 import time
 from email.mime.text import MIMEText
 import base64
+from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email import encoders
 
 # Load environment variables
 load_dotenv()
@@ -425,33 +428,79 @@ def get_roster_info(golfer_name):
             return True, has_ghin, email, gender, member_number
     return False, False, None, None, None
 
-def send_email(subject, body, to_email):
+def build_no_post_email(men, women, date_str):
+    """Create separate Excel files for men and women non-posting golfers."""
+    files = []
+    
+    # Function to create a single Excel file
+    def create_excel_file(golfers, gender):
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        
+        # Add headers
+        ws['A1'] = 'Last Name'
+        ws['B1'] = 'MemberNo'
+        ws['C1'] = 'Email'
+        ws['D1'] = 'NO_POST_DATE'
+        
+        # Add data
+        row = 2
+        for name, email, member_number in golfers:
+            ws[f'A{row}'] = name
+            ws[f'B{row}'] = member_number or ''
+            ws[f'C{row}'] = email or ''
+            ws[f'D{row}'] = date_str
+            row += 1
+        
+        # Save to a temporary file
+        temp_file = f'reports/non_posters_{gender}_{date_str.replace("-", "_")}.xlsx'
+        Path('reports').mkdir(parents=True, exist_ok=True)
+        wb.save(temp_file)
+        return temp_file
+    
+    # Create separate files for men and women
+    if men:
+        files.append(create_excel_file(men, 'men'))
+    if women:
+        files.append(create_excel_file(women, 'women'))
+    
+    return files
+
+def send_email(subject, body, to_email, attachment_paths=None):
+    """Send email with optional Excel attachments."""
     creds = get_google_creds()
     service = build('gmail', 'v1', credentials=creds)
-    message = MIMEText(body)
+    
+    # Create message container
+    message = MIMEMultipart()
     message['to'] = to_email
     message['from'] = "me"
     message['subject'] = subject
+    
+    # Add body text
+    message.attach(MIMEText(body))
+    
+    # Add attachments if provided
+    if attachment_paths:
+        for attachment_path in attachment_paths:
+            with open(attachment_path, 'rb') as f:
+                attachment = MIMEBase('application', 'vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+                attachment.set_payload(f.read())
+                encoders.encode_base64(attachment)
+                attachment.add_header('Content-Disposition', 'attachment', 
+                                    filename=os.path.basename(attachment_path))
+                message.attach(attachment)
+    
+    # Encode and send
     raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
     message_body = {'raw': raw}
     service.users().messages().send(userId="me", body=message_body).execute()
-
-def build_no_post_email(men, women, date_str):
-    lines = []
-    lines.append(f"The men that didn't post on {date_str} are:")
-    if men:
-        for name, email, member_number in men:
-            lines.append(f"- {name} | {email or 'No email'} | {member_number or 'No member #'}")
-    else:
-        lines.append("None")
-    lines.append("")
-    lines.append(f"The women that didn't post on {date_str} are:")
-    if women:
-        for name, email, member_number in women:
-            lines.append(f"- {name} | {email or 'No email'} | {member_number or 'No member #'}")
-    else:
-        lines.append("None")
-    return "\n".join(lines)
+    
+    # Clean up temporary files
+    if attachment_paths:
+        for path in attachment_paths:
+            if os.path.exists(path):
+                os.remove(path)
 
 def get_roster_name_by_ghin(ghin_number):
     """Look up a golfer's name in the roster by their GHIN number."""
@@ -556,13 +605,24 @@ if __name__ == "__main__":
     update_google_sheet(SPREADSHEET_ID, 'NoGHIN', noGHIN)
 
     date_str = date.strftime("%m-%d-%y")
-    email_body = build_no_post_email(men_no_post, women_no_post, date_str)
+    excel_files = build_no_post_email(men_no_post, women_no_post, date_str)
+    
+    # Create appropriate message based on which files were created
+    if len(excel_files) == 2:
+        body = "Please find attached the Excel reports for both men and women non-posting golfers."
+    elif len(excel_files) == 1:
+        gender = "men" if men_no_post else "women"
+        body = f"Please find attached the Excel report for {gender} non-posting golfers."
+    else:
+        body = "No non-posting golfers found for this date."
+    
     send_email(
         subject=f"Non-Posters for {date_str}",
-        body=email_body,
-        to_email="John.Paradise117@gmail.com"
+        body=body,
+        to_email="John.Paradise117@gmail.com",
+        attachment_paths=excel_files
     )
-    print("Summary email sent.")
+    print("Summary email sent with Excel attachment(s).")
 
     # Update PostPercentage sheet
     def update_post_percentage(sheet_id, posted_golfers, no_post_golfers):
