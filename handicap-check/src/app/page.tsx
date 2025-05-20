@@ -1,11 +1,14 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { format } from 'date-fns'
 import AuthButton from '@/components/AuthButton'
+import { useSession } from 'next-auth/react'
+import { createClient } from '@supabase/supabase-js'
+import SignInButton from '@/components/SignInButton'
 
 const formSchema = z.object({
   date: z.string().refine((date) => {
@@ -16,7 +19,14 @@ const formSchema = z.object({
 
 type FormData = z.infer<typeof formSchema>
 
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+)
+
 export default function Home() {
+  const { data: session, status } = useSession()
+  const [isApproved, setIsApproved] = useState<boolean | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [results, setResults] = useState<any>(null)
 
@@ -27,6 +37,24 @@ export default function Home() {
   } = useForm<FormData>({
     resolver: zodResolver(formSchema),
   })
+
+  useEffect(() => {
+    const checkApproval = async () => {
+      if (session?.user?.email) {
+        const { data } = await supabase
+          .from('users')
+          .select('is_approved')
+          .eq('email', session.user.email)
+          .single()
+        setIsApproved(data?.is_approved ?? false)
+      }
+    }
+    checkApproval()
+  }, [session])
+
+  if (status === 'loading' || isApproved === null) return <p>Loading...</p>
+  if (!session) return <SignInButton />
+  if (!isApproved) return <p>Your account is pending approval by an admin.</p>
 
   const onSubmit = async (data: FormData) => {
     setIsLoading(true)
