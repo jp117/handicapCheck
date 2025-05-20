@@ -39,60 +39,14 @@ oauth2Client.setCredentials({
   refresh_token: process.env.GOOGLE_REFRESH_TOKEN
 })
 
-async function getOrCreateGolfer(name: string, ghin_number?: string): Promise<string> {
-  // Normalize name
-  const nameParts = name.split(' ')
-    .map(part => part.replace(/,/g, '').replace(/\./g, '').trim())
-    .filter(part => part.length > 0);
-
-  const firstName = nameParts[0].toLowerCase().trim();
-  const lastName = nameParts.slice(1).join(' ').toLowerCase().trim();
-
-  // 1. Try to find by GHIN number if provided
-  if (ghin_number) {
-    const { data: ghinGolfer } = await supabase
-      .from('golfers')
-      .select('id')
-      .eq('ghin_number', ghin_number)
-      .single();
-    if (ghinGolfer) {
-      return ghinGolfer.id;
-    }
-  }
-
-  // 2. Try to find by lowercased, trimmed first and last name
-  const { data: nameGolfer } = await supabase
+async function getGolferIdByMemberNumber(member_number: string): Promise<string | null> {
+  const { data: golfer } = await supabase
     .from('golfers')
-    .select('id, ghin_number')
-    .ilike('first_name', firstName)
-    .ilike('last_name', lastName)
-    .single();
-  if (nameGolfer) {
-    // If found by name but missing GHIN, update it
-    if (ghin_number && !nameGolfer.ghin_number) {
-      await supabase
-        .from('golfers')
-        .update({ ghin_number })
-        .eq('id', nameGolfer.id);
-    }
-    return nameGolfer.id;
-  }
-
-  // 3. Create new golfer
-  const { data: newGolfer, error } = await supabase
-    .from('golfers')
-    .insert({
-      first_name: firstName,
-      last_name: lastName,
-      ghin_number: ghin_number || null
-    })
     .select('id')
+    .eq('member_number', member_number)
     .single();
-  if (error) {
-    throw error;
-  }
-  console.log('Created new golfer:', firstName, lastName, ghin_number);
-  return newGolfer.id;
+
+  return golfer ? golfer.id : null;
 }
 
 export async function POST(request: Request) {
@@ -123,13 +77,13 @@ export async function POST(request: Request) {
       trim: true
     })
     
-    // Transform CSV records to TeeTime objects
-    const teeTimes: TeeTime[] = records
-      .filter((record: any) => record && record.MemberName)
+    // Transform CSV records to use only MemberNo for lookup
+    const teeTimes = records
+      .filter((record: any) => record && record.MemberNo && record.TeeTime)
       .map((record: any) => ({
-        name: record.MemberName.split('-')[0].trim(),
+        member_number: record.MemberNo.trim(),
         time: record.TeeTime,
-        ghin_number: record.GHIN || undefined
+        date: record.TeeDate
       }))
     
     console.log('Number of tee times from CSV:', teeTimes.length)
@@ -143,13 +97,16 @@ export async function POST(request: Request) {
       })
     }
     
-    // Process each tee time and get/create golfer records
+    // Process each tee time and get golfer records by member_number
     const teeTimeInserts = await Promise.all(
-      teeTimes.map(async (teeTime) => {
-        if (!teeTime.name) return null
-        const golferId = await getOrCreateGolfer(teeTime.name, teeTime.ghin_number)
+      teeTimes.map(async (teeTime: any) => {
+        const golferId = await getGolferIdByMemberNumber(teeTime.member_number)
+        if (!golferId) {
+          // Optionally: log or skip this row
+          return null;
+        }
         return {
-          date,
+          date: teeTime.date,
           golfer_id: golferId,
           tee_time: teeTime.time,
           posting_status: 'unexcused_no_post'
@@ -160,18 +117,6 @@ export async function POST(request: Request) {
     // Filter out any null inserts and store in Supabase
     const validTeeTimeInserts = teeTimeInserts.filter(insert => insert !== null)
     console.log('Number of tee time inserts:', validTeeTimeInserts.length)
-    
-    // Check for existing tee times
-    const { data: existingTeeTimes, error: existingError } = await supabase
-      .from('tee_times')
-      .select('id, golfer_id, tee_time')
-      .eq('date', date)
-    
-    if (existingError) {
-      throw existingError
-    }
-    
-    console.log('Number of existing tee times:', existingTeeTimes?.length)
     
     // Store tee times in Supabase
     const { error: teeTimeError } = await supabase
@@ -185,42 +130,6 @@ export async function POST(request: Request) {
       throw teeTimeError
     }
     
-    // Get GHIN data from Gmail
-    const gmail = google.gmail({ version: 'v1', auth: oauth2Client })
-    const emailDate = new Date(date)
-    emailDate.setDate(emailDate.getDate() + 1) // Look for email from next day
-    
-    const searchQuery = `from:reporting@ghin.com subject:"Auto-Generated Scheduled Report - Played / Posted Report (Player Rounds)" after:${emailDate.toISOString().split('T')[0]} before:${new Date(emailDate.getTime() + 86400000).toISOString().split('T')[0]}`
-    
-    const messages = await gmail.users.messages.list({
-      userId: 'me',
-      q: searchQuery
-    })
-    
-    let ghinData: GHINScore[] = []
-    if (messages.data.messages && messages.data.messages.length > 0) {
-      const messageId = messages.data.messages[0].id
-      if (messageId) {
-        ghinData = await parseGHINData(gmail, messageId, 'me')
-        
-        // Update posting status for golfers who posted their scores
-        const { error: updateError } = await supabase
-          .from('tee_times')
-          .update({ posting_status: 'posted' })
-          .eq('date', date)
-          .in('golfer_id', await Promise.all(
-            ghinData.map(async (score) => {
-              const golferId = await getOrCreateGolfer(score.name, score.ghin_number)
-              return golferId
-            })
-          ))
-        
-        if (updateError) {
-          throw updateError
-        }
-      }
-    }
-    
     // Get the final state of all tee times for this date with golfer information
     const { data: finalTeeTimes, error: fetchError } = await supabase
       .from('tee_times')
@@ -229,7 +138,9 @@ export async function POST(request: Request) {
         golfer:golfers (
           id,
           first_name,
+          middle_name,
           last_name,
+          suffix,
           ghin_number,
           email,
           gender,
@@ -245,7 +156,6 @@ export async function POST(request: Request) {
     return NextResponse.json({
       date,
       totalGolfers: finalTeeTimes.length,
-      postedScores: ghinData.length,
       teeTimes: finalTeeTimes
     })
   } catch (error) {
