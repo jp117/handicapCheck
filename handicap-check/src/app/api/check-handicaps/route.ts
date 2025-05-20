@@ -5,6 +5,8 @@ import { google } from 'googleapis'
 import { OAuth2Client } from 'google-auth-library'
 import { parseGHINData } from '@/lib/ghin'
 import { parse } from 'csv-parse/sync'
+import NextAuth from 'next-auth'
+import GoogleProvider from 'next-auth/providers/google'
 
 interface TeeTime {
   name: string
@@ -166,3 +168,28 @@ export async function POST(request: Request) {
     )
   }
 } 
+
+export default NextAuth({
+  providers: [
+    GoogleProvider({
+      clientId: process.env.GOOGLE_CLIENT_ID!,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+      authorization: {
+        params: {
+          scope: 'openid email profile'
+        }
+      }
+    })
+  ],
+  callbacks: {
+    async signIn({ user, account, profile }) {
+      // Here you can upsert the user into your Supabase users table if you want
+      // You can also check if the user is an admin, etc.
+      return true
+    },
+    async session({ session, token, user }) {
+      // You can add custom fields to the session here
+      return session
+    }
+  }
+})
