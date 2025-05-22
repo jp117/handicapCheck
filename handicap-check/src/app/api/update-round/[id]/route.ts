@@ -8,35 +8,27 @@ const supabase = createClient(
 
 export async function PUT(
   request: Request,
-  { params }: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { posting_status, excuse_reason } = await request.json()
-
+    const { id } = await context.params;
+    const body = await request.json()
     const { data, error } = await supabase
       .from('tee_times')
       .update({
-        posting_status,
-        excuse_reason: posting_status === 'excused_no_post' ? excuse_reason : null,
+        ...body,
         updated_at: new Date().toISOString()
       })
-      .eq('id', params.id)
+      .eq('id', id)
       .select()
       .single()
 
-    if (error) {
-      console.error('Error updating round:', error)
-      return NextResponse.json(
-        { error: 'Failed to update round', details: error.message },
-        { status: 500 }
-      )
-    }
+    if (error) throw error
 
     return NextResponse.json(data)
   } catch (error) {
-    console.error('Unexpected error in update-round API:', error)
     return NextResponse.json(
-      { error: 'Failed to update round', details: error instanceof Error ? error.message : 'Unknown error' },
+      { error: error instanceof Error ? error.message : 'An error occurred' },
       { status: 500 }
     )
   }

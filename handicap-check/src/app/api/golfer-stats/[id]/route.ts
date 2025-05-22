@@ -10,70 +10,36 @@ export async function GET(
   request: Request,
   context: { params: Promise<{ id: string }> }
 ) {
-  const { id } = await context.params;
-  console.log('Fetching stats for golfer:', id)
-  
   try {
+    const { id } = await context.params;
     const { searchParams } = new URL(request.url)
     const startDate = searchParams.get('startDate')
     const endDate = searchParams.get('endDate')
 
-    console.log('Date range:', { startDate, endDate })
-
-    // Build the query
-    let query = supabase
+    const { data: teeTimes, error } = await supabase
       .from('tee_times')
-      .select('posting_status')
+      .select('*')
       .eq('golfer_id', id)
+      .order('date', { ascending: false })
 
-    // Add date filters if provided
-    if (startDate) {
-      query = query.gte('date', startDate)
-    }
-    if (endDate) {
-      query = query.lte('date', endDate)
-    }
-
-    const { data: teeTimes, error } = await query
-
-    if (error) {
-      console.error('Supabase error fetching tee times:', error)
-      return NextResponse.json({ 
-        error: 'Failed to fetch tee times', 
-        details: error.message,
-        code: error.code 
-      }, { status: 500 })
-    }
-
-    console.log('Tee times fetched:', teeTimes)
+    if (error) throw error
 
     // Calculate stats
-    const roundsPlayed = teeTimes.length
-    const roundsPosted = teeTimes.filter(teeTime => teeTime.posting_status === 'posted').length
-    const unexcusedNoPost = teeTimes.filter(teeTime => teeTime.posting_status === 'unexcused_no_post').length
-    const denominator = roundsPosted + unexcusedNoPost;
-    const postPercentage = denominator > 0 
-      ? Math.round((roundsPosted / denominator) * 100)
-      : 0
-
     const stats = {
-      roundsPlayed,
-      roundsPosted,
-      unexcusedNoPost,
-      postPercentage,
-      dateRange: {
-        start: startDate,
-        end: endDate
-      }
+      roundsPlayed: teeTimes.length,
+      roundsPosted: teeTimes.filter(t => t.posting_status === 'posted').length,
+      unexcusedNoPost: teeTimes.filter(t => t.posting_status === 'unexcused_no_post').length,
+      postPercentage: teeTimes.length > 0 
+        ? Math.round((teeTimes.filter(t => t.posting_status === 'posted').length / teeTimes.length) * 100)
+        : 0,
+      dateRange: { start: startDate, end: endDate }
     }
 
-    console.log('Calculated stats:', stats)
     return NextResponse.json(stats)
   } catch (error) {
-    console.error('Unexpected error in golfer-stats API:', error)
-    return NextResponse.json({ 
-      error: 'Failed to fetch golfer stats',
-      details: error instanceof Error ? error.message : 'Unknown error'
-    }, { status: 500 })
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'An error occurred' },
+      { status: 500 }
+    )
   }
 } 

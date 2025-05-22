@@ -8,35 +8,23 @@ const supabase = createClient(
 
 export async function GET(
   request: Request,
-  { params }: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
-  console.log('Fetching tee times for golfer:', params.id)
-  
   try {
-    // Get tee times for the golfer
+    const { id } = await context.params;
     const { data: teeTimes, error } = await supabase
       .from('tee_times')
-      .select('id, date, tee_time, posting_status, excuse_reason')
-      .eq('golfer_id', params.id)
+      .select('*')
+      .eq('golfer_id', id)
       .order('date', { ascending: false })
-      .limit(20)
 
-    if (error) {
-      console.error('Supabase error fetching tee times:', error)
-      return NextResponse.json({ 
-        error: 'Failed to fetch tee times', 
-        details: error.message,
-        code: error.code 
-      }, { status: 500 })
-    }
+    if (error) throw error
 
-    console.log('Tee times fetched:', teeTimes)
     return NextResponse.json(teeTimes)
   } catch (error) {
-    console.error('Unexpected error in golfer-rounds API:', error)
-    return NextResponse.json({ 
-      error: 'Failed to fetch golfer tee times',
-      details: error instanceof Error ? error.message : 'Unknown error'
-    }, { status: 500 })
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'An error occurred' },
+      { status: 500 }
+    )
   }
 } 
