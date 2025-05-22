@@ -24,13 +24,17 @@ export async function GET(
 
     if (error) throw error
 
+    const roundsPosted = teeTimes.filter(t => t.posting_status === 'posted').length;
+    const unexcusedNoPost = teeTimes.filter(t => t.posting_status === 'unexcused_no_post').length;
+    const denominator = roundsPosted + unexcusedNoPost;
+
     // Calculate stats
     const stats = {
       roundsPlayed: teeTimes.length,
-      roundsPosted: teeTimes.filter(t => t.posting_status === 'posted').length,
-      unexcusedNoPost: teeTimes.filter(t => t.posting_status === 'unexcused_no_post').length,
-      postPercentage: teeTimes.length > 0 
-        ? Math.round((teeTimes.filter(t => t.posting_status === 'posted').length / teeTimes.length) * 100)
+      roundsPosted,
+      unexcusedNoPost,
+      postPercentage: denominator > 0 
+        ? Math.round((roundsPosted / denominator) * 100)
         : 0,
       dateRange: { start: startDate, end: endDate }
     }

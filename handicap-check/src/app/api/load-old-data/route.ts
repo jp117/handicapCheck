@@ -187,10 +187,16 @@ export async function GET(request: Request) {
         const existing = existingTeeTimes?.find(
           t => t.golfer_id === golferId && t.tee_time === teeTime.time
         );
-        if (existing && (existing.posting_status === 'posted' || existing.posting_status === 'excused_no_post')) {
-          // Do not overwrite posted or excused_no_post
-          return null;
+        
+        // If there's an existing record, check its status
+        if (existing) {
+          // Don't modify if it's already posted or excused
+          if (existing.posting_status === 'posted' || existing.posting_status === 'excused_no_post') {
+            return null;
+          }
         }
+        
+        // Only insert new records or update unexcused ones
         return {
           date: teeTime.date,
           golfer_id: golferId,
@@ -204,26 +210,33 @@ export async function GET(request: Request) {
     const validTeeTimeInserts = teeTimeInserts.filter(insert => insert !== null)
     
     try {
-      const { error: upsertError } = await supabase
+      // Instead of upsert, we'll insert only new records
+      const { error: insertError } = await supabase
         .from('tee_times')
-        .upsert(validTeeTimeInserts, {
-          onConflict: 'date,golfer_id,tee_time',
-          ignoreDuplicates: false
-        })
+        .insert(validTeeTimeInserts)
+        .select()
       
-      if (upsertError) {
-        throw upsertError;
+      if (insertError) {
+        // If we get a unique violation, that's okay - it means the record already exists
+        if (insertError.code === '23505') { // PostgreSQL unique violation code
+          return NextResponse.json({
+            message: 'Tee times processed (some already existed)',
+            unmatchedMemberNumbers,
+            processedCount: validTeeTimeInserts.length
+          });
+        }
+        throw insertError;
       }
-      
+
       return NextResponse.json({
         message: 'Tee times loaded successfully',
         unmatchedMemberNumbers,
-        upsertedCount: validTeeTimeInserts.length
+        insertedCount: validTeeTimeInserts.length
       });
     } catch (error) {
-      console.error('Error during upsert:', error);
+      console.error('Error during insert:', error);
       return NextResponse.json({ 
-        error: error instanceof Error ? error.message : 'An error occurred during upsert',
+        error: error instanceof Error ? error.message : 'An error occurred during insert',
         details: error
       }, { status: 500 });
     }
