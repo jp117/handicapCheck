@@ -46,7 +46,13 @@ export default function RootLayout({
   );
 }
 
-export async function getGmailClient(user) {
+interface GmailUser {
+  accessToken?: string;
+  refreshToken: string;
+  expiryDate?: number;
+}
+
+export async function getGmailClient(user: GmailUser) {
   const oAuth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET,
