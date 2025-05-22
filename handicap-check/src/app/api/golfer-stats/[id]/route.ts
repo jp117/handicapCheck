@@ -13,11 +13,27 @@ export async function GET(
   console.log('Fetching stats for golfer:', params.id)
   
   try {
-    // Get all tee times for the golfer
-    const { data: teeTimes, error } = await supabase
+    const { searchParams } = new URL(request.url)
+    const startDate = searchParams.get('startDate')
+    const endDate = searchParams.get('endDate')
+
+    console.log('Date range:', { startDate, endDate })
+
+    // Build the query
+    let query = supabase
       .from('tee_times')
       .select('posting_status')
       .eq('golfer_id', params.id)
+
+    // Add date filters if provided
+    if (startDate) {
+      query = query.gte('date', startDate)
+    }
+    if (endDate) {
+      query = query.lte('date', endDate)
+    }
+
+    const { data: teeTimes, error } = await query
 
     if (error) {
       console.error('Supabase error fetching tee times:', error)
@@ -42,7 +58,11 @@ export async function GET(
       roundsPlayed,
       roundsPosted,
       unexcusedNoPost,
-      postPercentage
+      postPercentage,
+      dateRange: {
+        start: startDate,
+        end: endDate
+      }
     }
 
     console.log('Calculated stats:', stats)

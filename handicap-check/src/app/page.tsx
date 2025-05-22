@@ -15,17 +15,11 @@ interface Golfer {
 export default function Home() {
   const { data: session, status } = useSession()
   const [selectedGolfer, setSelectedGolfer] = useState<Golfer | null>(null)
-  const [golferStats, setGolferStats] = useState<any>(null)
   const [golferRounds, setGolferRounds] = useState<any[]>([])
 
   const handleGolferSelect = async (golfer: Golfer) => {
     setSelectedGolfer(golfer)
     try {
-      // Fetch golfer stats
-      const statsResponse = await fetch(`/api/golfer-stats/${golfer.id}`)
-      const stats = await statsResponse.json()
-      setGolferStats(stats)
-
       // Fetch golfer rounds
       const roundsResponse = await fetch(`/api/golfer-rounds/${golfer.id}`)
       const rounds = await roundsResponse.json()
@@ -55,8 +49,8 @@ export default function Home() {
           </div>
         </div>
 
-        {selectedGolfer && golferStats && (
-          <GolferStats stats={golferStats} />
+        {selectedGolfer && (
+          <GolferStats golferId={selectedGolfer.id} />
         )}
 
         {selectedGolfer && golferRounds.length > 0 && (

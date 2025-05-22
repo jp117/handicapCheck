@@ -1,17 +1,71 @@
 'use client'
 
+import { useState, useEffect } from 'react'
+import DateFilter from './DateFilter'
+
 interface Stats {
   roundsPlayed: number
   roundsPosted: number
   unexcusedNoPost: number
   postPercentage: number
+  dateRange?: {
+    start: string | null
+    end: string | null
+  }
 }
 
-export default function GolferStats({ stats }: { stats: Stats }) {
+interface GolferStatsProps {
+  golferId: string
+}
+
+export default function GolferStats({ golferId }: GolferStatsProps) {
+  const [stats, setStats] = useState<Stats | null>(null)
+  const [isLoading, setIsLoading] = useState(false)
+
+  const fetchStats = async (startDate?: string | null, endDate?: string | null) => {
+    setIsLoading(true)
+    try {
+      const url = new URL(`/api/golfer-stats/${golferId}`, window.location.origin)
+      if (startDate) url.searchParams.set('startDate', startDate)
+      if (endDate) url.searchParams.set('endDate', endDate)
+
+      const response = await fetch(url)
+      const data = await response.json()
+      setStats(data)
+    } catch (error) {
+      console.error('Error fetching stats:', error)
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    fetchStats()
+  }, [golferId])
+
+  const handleDateFilterChange = (startDate: string | null, endDate: string | null) => {
+    fetchStats(startDate, endDate)
+  }
+
+  if (!stats) {
+    return (
+      <div className="bg-white shadow sm:rounded-lg">
+        <div className="px-4 py-5 sm:p-6">
+          <div className="flex justify-center">
+            <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-300 border-t-indigo-600" />
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="bg-white shadow sm:rounded-lg">
       <div className="px-4 py-5 sm:p-6">
-        <h3 className="text-lg font-medium leading-6 text-gray-900">Golfer Stats</h3>
+        <div className="flex justify-between items-center mb-5">
+          <h3 className="text-lg font-medium leading-6 text-gray-900">Golfer Stats</h3>
+          <DateFilter onFilterChange={handleDateFilterChange} />
+        </div>
         <div className="mt-5 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
           <div className="overflow-hidden rounded-lg bg-white px-4 py-5 shadow sm:p-6">
             <dt className="truncate text-sm font-medium text-gray-700">Rounds Played</dt>

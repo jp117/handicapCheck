@@ -6,9 +6,14 @@ import { useDebounce } from '@/hooks/useDebounce'
 interface Golfer {
   id: string
   name: string
+  handicap_index: number
 }
 
-export default function GolferSearch({ onSelect }: { onSelect: (golfer: Golfer) => void }) {
+interface GolferSearchProps {
+  onSelect: (golfer: Golfer) => void
+}
+
+export default function GolferSearch({ onSelect }: GolferSearchProps) {
   const [search, setSearch] = useState('')
   const [results, setResults] = useState<Golfer[]>([])
   const [isLoading, setIsLoading] = useState(false)
