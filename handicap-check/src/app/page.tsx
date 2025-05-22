@@ -1,77 +1,46 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { useForm } from 'react-hook-form'
-import { zodResolver } from '@hookform/resolvers/zod'
-import { z } from 'zod'
-import { format } from 'date-fns'
+import { useState } from 'react'
 import { useSession } from 'next-auth/react'
-import { createClient } from '@supabase/supabase-js'
-import SignInButton from '@/components/SignInButton'
+import GolferSearch from '@/components/GolferSearch'
+import GolferStats from '@/components/GolferStats'
+import GolferRounds from '@/components/GolferRounds'
 
-const formSchema = z.object({
-  date: z.string().refine((date) => {
-    const parsed = new Date(date)
-    return !isNaN(parsed.getTime())
-  }, 'Please enter a valid date'),
-})
-
-type FormData = z.infer<typeof formSchema>
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-)
+interface Golfer {
+  id: string
+  name: string
+  handicap_index: number
+}
 
 export default function Home() {
   const { data: session, status } = useSession()
-  const [isApproved, setIsApproved] = useState<boolean | null>(null)
-  const [isLoading, setIsLoading] = useState(false)
-  const [results, setResults] = useState<any>(null)
+  const [selectedGolfer, setSelectedGolfer] = useState<Golfer | null>(null)
+  const [golferStats, setGolferStats] = useState<any>(null)
+  const [golferRounds, setGolferRounds] = useState<any[]>([])
 
-  const {
-    register,
-    handleSubmit,
-    formState: { errors },
-  } = useForm<FormData>({
-    resolver: zodResolver(formSchema),
-  })
-
-  useEffect(() => {
-    const checkApproval = async () => {
-      if (session?.user?.email) {
-        const { data } = await supabase
-          .from('users')
-          .select('is_approved')
-          .eq('email', session.user.email)
-          .single()
-        setIsApproved(data?.is_approved ?? false)
-      }
-    }
-    checkApproval()
-  }, [session])
-
-  if (status === 'loading' || isApproved === null) return <p>Loading...</p>
-  if (!session) return <SignInButton />
-  if (!isApproved) return <p>Your account is pending approval by an admin.</p>
-
-  const onSubmit = async (data: FormData) => {
-    setIsLoading(true)
+  const handleGolferSelect = async (golfer: Golfer) => {
+    setSelectedGolfer(golfer)
     try {
-      const response = await fetch('/api/check-handicaps', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(data),
-      })
-      const result = await response.json()
-      setResults(result)
+      // Fetch golfer stats
+      const statsResponse = await fetch(`/api/golfer-stats/${golfer.id}`)
+      const stats = await statsResponse.json()
+      setGolferStats(stats)
+
+      // Fetch golfer rounds
+      const roundsResponse = await fetch(`/api/golfer-rounds/${golfer.id}`)
+      const rounds = await roundsResponse.json()
+      setGolferRounds(rounds)
     } catch (error) {
-      console.error('Error:', error)
-    } finally {
-      setIsLoading(false)
+      console.error('Error fetching golfer data:', error)
     }
+  }
+
+  if (status === 'loading' || !session) {
+    return (
+      <div className="flex items-center justify-center min-h-[50vh]">
+        <p className="text-lg text-gray-900 font-medium">Please log in to see content</p>
+      </div>
+    )
   }
 
   return (
@@ -79,41 +48,19 @@ export default function Home() {
       <div className="space-y-6">
         <div className="bg-white shadow sm:rounded-lg">
           <div className="px-4 py-5 sm:p-6">
-            <h2 className="text-lg font-medium text-gray-900">Check Handicaps</h2>
-            <form onSubmit={handleSubmit(onSubmit)} className="mt-5 space-y-4">
-              <div>
-                <label htmlFor="date" className="block text-sm font-medium text-gray-700">
-                  Date
-                </label>
-                <input
-                  type="date"
-                  {...register('date')}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-                />
-                {errors.date && (
-                  <p className="mt-1 text-sm text-red-600">{errors.date.message}</p>
-                )}
-              </div>
-              <button
-                type="submit"
-                disabled={isLoading}
-                className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
-              >
-                {isLoading ? 'Checking...' : 'Check Handicaps'}
-              </button>
-            </form>
+            <h2 className="text-lg font-medium text-gray-900">Search Golfer</h2>
+            <div className="mt-5">
+              <GolferSearch onSelect={handleGolferSelect} />
+            </div>
           </div>
         </div>
 
-        {results && (
-          <div className="bg-white shadow sm:rounded-lg">
-            <div className="px-4 py-5 sm:p-6">
-              <h3 className="text-lg font-medium text-gray-900">Results</h3>
-              <div className="mt-4">
-                {/* Add results display here */}
-              </div>
-            </div>
-          </div>
+        {selectedGolfer && golferStats && (
+          <GolferStats stats={golferStats} />
+        )}
+
+        {selectedGolfer && golferRounds.length > 0 && (
+          <GolferRounds rounds={golferRounds} />
         )}
       </div>
     </main>
