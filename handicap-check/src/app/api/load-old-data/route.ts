@@ -153,8 +153,13 @@ export async function GET(request: Request) {
 
     const normalizedRequestedDate = date; // already in YYYY-MM-DD
 
-    // MTech data has no header row; use fixed indices
-    // 0: TeeDate, 1: TeeTime, 2: MemberName, 3: GHIN, 4: MemberNo, 5: MemberNo (if name has comma)
+    // Fetch posted GHINs for this date
+    const gmail = await getGmailClient();
+    let postedGHINs = await getUSGAPosts(dateObj, gmail);
+    if (!Array.isArray(postedGHINs)) postedGHINs = [];
+    postedGHINs = postedGHINs.map((g: string) => String(g).trim());
+
+    // Parse tee times from MTech data
     const teeTimes = (records as string[][])
       .filter((cols: string[]) => cols.length >= 5 && (cols[4]?.trim() || cols[5]?.trim()))
       .filter((cols: string[]) => normalizeDate(cols[0].trim()) === normalizedRequestedDate)
@@ -162,84 +167,122 @@ export async function GET(request: Request) {
       .map((cols: string[]) => ({
         member_number: (cols[5]?.trim() || cols[4]?.trim()).replace(/\r/g, ''),
         time: cols[1].trim(),
-        date: cols[0].trim()
+        date: cols[0].trim(),
+        name: cols[2]?.trim()
       }));
 
-    // Look up golfer IDs and prepare upserts
-    const unmatchedMemberNumbers: string[] = []
-    // Fetch existing tee_times for this date
+    // Group tee times by date and time to identify solo rounds
+    const teeTimeGroups = teeTimes.reduce((groups, teeTime) => {
+      const key = `${teeTime.date}-${teeTime.time}`;
+      if (!groups[key]) {
+        groups[key] = [];
+      }
+      groups[key].push(teeTime);
+      return groups;
+    }, {} as Record<string, typeof teeTimes>);
+
+    const unmatchedMemberNumbers: string[] = [];
     const { data: existingTeeTimes, error: fetchExistingError } = await supabase
       .from('tee_times')
       .select('id, date, golfer_id, tee_time, posting_status')
-      .eq('date', date)
-    if (fetchExistingError) {
-      throw fetchExistingError
-    }
+      .eq('date', date);
+    if (fetchExistingError) throw fetchExistingError;
 
     const teeTimeInserts = await Promise.all(
-      teeTimes.map(async (teeTime: { member_number: string; time: string; date: string }) => {
-        const golferId = await getGolferIdByMemberNumber(teeTime.member_number);
-        if (!golferId) {
+      teeTimes.map(async (teeTime) => {
+        // Look up golfer by member number and get their GHIN from the DB
+        const { data: golfer, error: golferError } = await supabase
+          .from('golfers')
+          .select('id, ghin_number')
+          .ilike('member_number', teeTime.member_number.trim())
+          .single();
+        if (golferError || !golfer) {
           unmatchedMemberNumbers.push(teeTime.member_number);
           return null;
         }
+        const golferId = golfer.id;
+        const rosterGhin = golfer.ghin_number ? String(golfer.ghin_number).trim() : '';
+
+        // Check if this is a solo round
+        const key = `${teeTime.date}-${teeTime.time}`;
+        const isSoloRound = teeTimeGroups[key].length === 1;
+
         // Check if a tee_time already exists for this date, golfer, and tee_time
         const existing = existingTeeTimes?.find(
           t => t.golfer_id === golferId && t.tee_time === teeTime.time
         );
-        
-        // If there's an existing record, check its status
-        if (existing) {
-          // Don't modify if it's already posted or excused
-          if (existing.posting_status === 'posted' || existing.posting_status === 'excused_no_post') {
-            return null;
-          }
+        if (existing && existing.posting_status === 'posted') {
+          return null;
         }
-        
-        // Only insert new records or update unexcused ones
+
+        // Determine posting status
+        let posting_status: 'posted' | 'excused_no_post' | 'unexcused_no_post';
+        let excuse_reason: string | null = null;
+        if (rosterGhin && postedGHINs.includes(rosterGhin)) {
+          posting_status = 'posted';
+        } else if (isSoloRound) {
+          posting_status = 'excused_no_post';
+          excuse_reason = 'solo';
+        } else {
+          posting_status = 'unexcused_no_post';
+        }
+
         return {
           date: teeTime.date,
           golfer_id: golferId,
           tee_time: teeTime.time,
-          posting_status: 'unexcused_no_post'
+          posting_status,
+          excuse_reason
         };
       })
     );
 
-    // Filter out null values and upsert the remaining tee_times
-    const validTeeTimeInserts = teeTimeInserts.filter(insert => insert !== null)
-    
-    try {
-      // Instead of upsert, we'll insert only new records
-      const { error: insertError } = await supabase
-        .from('tee_times')
-        .insert(validTeeTimeInserts)
-        .select()
-      
-      if (insertError) {
-        // If we get a unique violation, that's okay - it means the record already exists
-        if (insertError.code === '23505') { // PostgreSQL unique violation code
-          return NextResponse.json({
-            message: 'Tee times processed (some already existed)',
-            unmatchedMemberNumbers,
-            processedCount: validTeeTimeInserts.length
-          });
-        }
-        throw insertError;
-      }
+    // Filter out null values and normalize date for DB insert (YYYY-MM-DD)
+    const validTeeTimeInserts = teeTimeInserts.filter(insert => insert !== null).map(t => ({
+      ...t,
+      date: normalizeDate(t.date)
+    }));
 
-      return NextResponse.json({
-        message: 'Tee times loaded successfully',
-        unmatchedMemberNumbers,
-        insertedCount: validTeeTimeInserts.length
-      });
-    } catch (error) {
-      console.error('Error during insert:', error);
-      return NextResponse.json({ 
-        error: error instanceof Error ? error.message : 'An error occurred during insert',
-        details: error
-      }, { status: 500 });
+    // Insert each tee time individually to avoid batch failure on unique violation
+    let insertedCount = 0;
+    let skippedCount = 0;
+    let excusedInserted = 0;
+    let unexcusedInserted = 0;
+    let postedInserted = 0;
+    for (const teeTime of validTeeTimeInserts) {
+      try {
+        const { error: insertError } = await supabase
+          .from('tee_times')
+          .insert(teeTime)
+          .select();
+        if (insertError) {
+          if (insertError.code === '23505') {
+            skippedCount++;
+            continue;
+          } else {
+            throw insertError;
+          }
+        }
+        insertedCount++;
+        if (teeTime.posting_status === 'excused_no_post') excusedInserted++;
+        if (teeTime.posting_status === 'unexcused_no_post') unexcusedInserted++;
+        if (teeTime.posting_status === 'posted') postedInserted++;
+      } catch (err) {
+        console.error('Error inserting tee time:', teeTime, err);
+        throw err;
+      }
     }
+
+    return NextResponse.json({
+      message: 'Tee times loaded successfully',
+      totalProcessed: validTeeTimeInserts.length,
+      insertedCount,
+      skippedCount,
+      postedInserted,
+      excusedInserted,
+      unexcusedInserted,
+      unmatchedMemberNumbers
+    });
   } catch (error) {
     console.error('Error loading old data:', error);
     return NextResponse.json({ 
