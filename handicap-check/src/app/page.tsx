@@ -5,7 +5,6 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { format } from 'date-fns'
-import AuthButton from '@/components/AuthButton'
 import { useSession } from 'next-auth/react'
 import { createClient } from '@supabase/supabase-js'
 import SignInButton from '@/components/SignInButton'
@@ -77,8 +76,6 @@ export default function Home() {
 
   return (
     <main>
-      <h1>Welcome to Handicap Check</h1>
-      <AuthButton />
       <div className="space-y-6">
         <div className="bg-white shadow sm:rounded-lg">
           <div className="px-4 py-5 sm:p-6">

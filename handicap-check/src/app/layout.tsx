@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import Providers from './providers'
+import AuthNav from '@/components/AuthNav'
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -27,6 +28,9 @@ export default function RootLayout({
                     <div className="flex-shrink-0 flex items-center">
                       <h1 className="text-xl font-bold text-gray-900">Handicap Check</h1>
                     </div>
+                  </div>
+                  <div className="flex items-center">
+                    <AuthNav />
                   </div>
                 </div>
               </div>
