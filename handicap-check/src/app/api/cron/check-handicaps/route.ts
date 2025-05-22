@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { google } from 'googleapis'
 const nodemailer = require('nodemailer')
+import { isTeeTimeExcluded } from '@/lib/exclusions'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -109,7 +110,20 @@ export async function GET() {
     }).replace(/\//g, '-')
 
     // 1. Get MTech data
-    const teeTimes = await getMTechData(dateStr)
+    let teeTimes = await getMTechData(dateStr)
+
+    // Fetch exclusions for this date
+    const { data: exclusions, error: exError } = await supabase
+      .from('excluded_dates')
+      .select('*')
+      .eq('date', today.toISOString().slice(0, 10))
+    if (exError) throw new Error('Failed to fetch exclusions')
+
+    // Filter out tee times that are excluded
+    teeTimes = teeTimes.filter(row => {
+      // row[1] is assumed to be the tee time string
+      return !isTeeTimeExcluded(row[1], exclusions)
+    })
     
     // 2. Check for solo players
     const soloPlayers = await checkSoloPlayers(teeTimes)

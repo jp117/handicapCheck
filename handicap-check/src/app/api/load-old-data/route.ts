@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { google } from 'googleapis'
 import * as XLSX from 'xlsx'
+import { isTeeTimeExcluded } from '@/lib/exclusions'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -101,6 +102,14 @@ async function getGolferIdByMemberNumber(member_number: string): Promise<string 
   return golfer ? golfer.id : null;
 }
 
+// Helper to normalize dates to YYYY-MM-DD
+function normalizeDate(str: string): string {
+  // Accepts M/D/YYYY or MM/DD/YYYY and returns YYYY-MM-DD
+  const [month, day, year] = str.split(/[\/-]/).map(s => s.trim());
+  if (!year || !month || !day) return '';
+  return `${year.padStart(4, '20')}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+}
+
 export async function GET(request: Request) {
   try {
     // Get date from query param, default to today
@@ -126,11 +135,29 @@ export async function GET(request: Request) {
     // 1. Get MTech data for the date
     const teeTimesRaw = await getMTechData(formattedDate)
 
+    // Fetch exclusions for this date
+    const { data: exclusions, error: exError } = await supabase
+      .from('excluded_dates')
+      .select('*')
+      .eq('date', date)
+    if (exError) throw exError
+
+    // Helper to normalize dates to YYYY-MM-DD
+    function normalizeDate(str: string): string {
+      // Accepts M/D/YYYY or MM/DD/YYYY and returns YYYY-MM-DD
+      const [month, day, year] = str.split(/[\/-]/).map(s => s.trim());
+      if (!year || !month || !day) return '';
+      return `${year.padStart(4, '20')}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+    }
+    const normalizedRequestedDate = date; // already in YYYY-MM-DD
+
     // MTech data has no header row; use fixed indices
     // 0: TeeDate, 1: TeeTime, 2: MemberName, 3: GHIN, 4: MemberNo
     const teeTimes = teeTimesRaw
       .map(row => row.split(','))
       .filter(cols => cols.length > 4 && cols[4].trim())
+      .filter(cols => normalizeDate(cols[0].trim()) === normalizedRequestedDate)
+      .filter(cols => !isTeeTimeExcluded(cols[1], exclusions))
       .map(cols => ({
         member_number: cols[4].trim(),
         time: cols[1].trim(),

@@ -50,8 +50,9 @@ export async function GET(
     const roundsPlayed = teeTimes.length
     const roundsPosted = teeTimes.filter(teeTime => teeTime.posting_status === 'posted').length
     const unexcusedNoPost = teeTimes.filter(teeTime => teeTime.posting_status === 'unexcused_no_post').length
-    const postPercentage = roundsPlayed > 0 
-      ? Math.round((roundsPosted / (roundsPlayed + unexcusedNoPost)) * 100)
+    const denominator = roundsPosted + unexcusedNoPost;
+    const postPercentage = denominator > 0 
+      ? Math.round((roundsPosted / denominator) * 100)
       : 0
 
     const stats = {

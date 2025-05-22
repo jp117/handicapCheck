@@ -16,6 +16,7 @@ export default function Home() {
   const { data: session, status } = useSession()
   const [selectedGolfer, setSelectedGolfer] = useState<Golfer | null>(null)
   const [golferRounds, setGolferRounds] = useState<any[]>([])
+  const [statsRefreshKey, setStatsRefreshKey] = useState(0)
 
   const handleGolferSelect = async (golfer: Golfer) => {
     setSelectedGolfer(golfer)
@@ -63,6 +64,7 @@ export default function Home() {
       if (selectedGolfer) {
         const updatedRounds = await fetchRounds(selectedGolfer.id)
         setGolferRounds(updatedRounds)
+        setStatsRefreshKey(k => k + 1) // Force GolferStats to remount and re-fetch
       }
     } catch (error) {
       console.error('Error updating round:', error)
@@ -109,7 +111,7 @@ export default function Home() {
 
           {selectedGolfer && (
             <>
-              <GolferStats golferId={selectedGolfer.id} golferName={selectedGolfer.name} />
+              <GolferStats key={statsRefreshKey} golferId={selectedGolfer.id} golferName={selectedGolfer.name} />
               <GolferRounds rounds={golferRounds} onUpdateRound={handleUpdateRound} />
             </>
           )}
