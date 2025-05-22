@@ -21,15 +21,43 @@ export default NextAuth({
   ],
   callbacks: {
     async signIn({ user, account, profile }) {
-      // Upsert user into Supabase
-      if (user.email) {
-        await supabase.from('users').upsert({
-          email: user.email,
-          name: user.name,
-          google_id: account?.providerAccountId,
-        }, { onConflict: 'email' })
+      if (!user.email) return false
+
+      // Check if user exists and is approved
+      const { data: existingUser } = await supabase
+        .from('users')
+        .select('is_approved')
+        .eq('email', user.email)
+        .single()
+
+      // If user exists but is not approved, deny access
+      if (existingUser && !existingUser.is_approved) {
+        return false
       }
+
+      // Upsert user into Supabase
+      await supabase.from('users').upsert({
+        email: user.email,
+        name: user.name,
+        google_id: account?.providerAccountId,
+      }, { onConflict: 'email' })
+
       return true
+    },
+    async session({ session, token, user }) {
+      if (session.user?.email) {
+        // Get user's approval status
+        const { data: userData } = await supabase
+          .from('users')
+          .select('is_approved, is_admin')
+          .eq('email', session.user.email)
+          .single()
+
+        // Add approval status to session
+        session.user.isApproved = userData?.is_approved ?? false
+        session.user.isAdmin = userData?.is_admin ?? false
+      }
+      return session
     }
   }
 }) 

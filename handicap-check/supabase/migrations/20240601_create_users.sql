@@ -5,6 +5,7 @@ CREATE TABLE users (
   name text,
   google_id text UNIQUE,
   is_admin boolean NOT NULL DEFAULT false,
+  is_approved boolean NOT NULL DEFAULT false,
   gmail_refresh_token text,
   created_at timestamptz NOT NULL DEFAULT timezone('utc'::text, now()),
   updated_at timestamptz NOT NULL DEFAULT timezone('utc'::text, now())

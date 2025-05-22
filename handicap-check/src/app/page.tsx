@@ -29,10 +29,26 @@ export default function Home() {
     }
   }
 
-  if (status === 'loading' || !session) {
+  if (status === 'loading') {
+    return (
+      <div className="flex items-center justify-center min-h-[50vh]">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-300 border-t-indigo-600" />
+      </div>
+    )
+  }
+
+  if (!session) {
     return (
       <div className="flex items-center justify-center min-h-[50vh]">
         <p className="text-lg text-gray-900 font-medium">Please log in to see content</p>
+      </div>
+    )
+  }
+
+  if (!session.user.isApproved) {
+    return (
+      <div className="flex items-center justify-center min-h-[50vh]">
+        <p className="text-lg text-gray-900 font-medium">Your account is pending approval. Please contact an administrator.</p>
       </div>
     )
   }
@@ -50,7 +66,7 @@ export default function Home() {
         </div>
 
         {selectedGolfer && (
-          <GolferStats golferId={selectedGolfer.id} />
+          <GolferStats golferId={selectedGolfer.id} golferName={selectedGolfer.name} />
         )}
 
         {selectedGolfer && golferRounds.length > 0 && (

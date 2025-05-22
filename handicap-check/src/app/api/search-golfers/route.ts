@@ -40,8 +40,8 @@ export async function GET(request: Request) {
 
     const { data, error } = await supabase
       .from('golfers')
-      .select('id, first_name, last_name')
-      .or(`first_name.ilike.%${query}%,last_name.ilike.%${query}%`)
+      .select('id, first_name, last_name, suffix')
+      .or(`first_name.ilike.%${query}%,last_name.ilike.%${query}%,suffix.ilike.%${query}%`)
       .order('last_name')
       .limit(10)
 
@@ -56,7 +56,7 @@ export async function GET(request: Request) {
     // Transform the data to match the expected interface
     const transformedData = data.map(golfer => ({
       id: golfer.id,
-      name: `${golfer.first_name} ${golfer.last_name}`
+      name: `${golfer.first_name} ${golfer.last_name}${golfer.suffix ? ` ${golfer.suffix}` : ''}`
     }))
 
     console.log('Search results:', transformedData)
