@@ -29,6 +29,47 @@ export default function Home() {
     }
   }
 
+  const fetchRounds = async (golferId: string) => {
+    try {
+      const response = await fetch(`/api/golfer-rounds/${golferId}`)
+      if (!response.ok) {
+        throw new Error('Failed to fetch rounds')
+      }
+      return await response.json()
+    } catch (error) {
+      console.error('Error fetching rounds:', error)
+      return []
+    }
+  }
+
+  const handleUpdateRound = async (roundId: string, status: string, excuseReason?: string) => {
+    try {
+      const response = await fetch(`/api/update-round/${roundId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          posting_status: status,
+          excuse_reason: excuseReason,
+        }),
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to update round')
+      }
+
+      // Refresh the rounds data
+      if (selectedGolfer) {
+        const updatedRounds = await fetchRounds(selectedGolfer.id)
+        setGolferRounds(updatedRounds)
+      }
+    } catch (error) {
+      console.error('Error updating round:', error)
+      throw error
+    }
+  }
+
   if (status === 'loading') {
     return (
       <div className="flex items-center justify-center min-h-[50vh]">
@@ -54,24 +95,25 @@ export default function Home() {
   }
 
   return (
-    <main>
-      <div className="space-y-6">
-        <div className="bg-white shadow sm:rounded-lg">
-          <div className="px-4 py-5 sm:p-6">
-            <h2 className="text-lg font-medium text-gray-900">Search Golfer</h2>
-            <div className="mt-5">
-              <GolferSearch onSelect={handleGolferSelect} />
+    <main className="min-h-screen bg-gray-50">
+      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
+        <div className="space-y-6">
+          <div className="bg-white shadow sm:rounded-lg">
+            <div className="px-4 py-5 sm:p-6">
+              <h3 className="text-lg font-medium leading-6 text-gray-900">Golfer Search</h3>
+              <div className="mt-5">
+                <GolferSearch onSelect={handleGolferSelect} />
+              </div>
             </div>
           </div>
+
+          {selectedGolfer && (
+            <>
+              <GolferStats golferId={selectedGolfer.id} golferName={selectedGolfer.name} />
+              <GolferRounds rounds={golferRounds} onUpdateRound={handleUpdateRound} />
+            </>
+          )}
         </div>
-
-        {selectedGolfer && (
-          <GolferStats golferId={selectedGolfer.id} golferName={selectedGolfer.name} />
-        )}
-
-        {selectedGolfer && golferRounds.length > 0 && (
-          <GolferRounds rounds={golferRounds} />
-        )}
       </div>
     </main>
   )

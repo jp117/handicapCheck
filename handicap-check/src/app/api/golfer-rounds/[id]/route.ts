@@ -16,7 +16,7 @@ export async function GET(
     // Get tee times for the golfer
     const { data: teeTimes, error } = await supabase
       .from('tee_times')
-      .select('id, date, tee_time, posting_status')
+      .select('id, date, tee_time, posting_status, excuse_reason')
       .eq('golfer_id', params.id)
       .order('date', { ascending: false })
       .limit(20)
