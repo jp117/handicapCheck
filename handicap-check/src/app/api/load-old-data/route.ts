@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js'
 import { google } from 'googleapis'
 import * as XLSX from 'xlsx'
 import { isTeeTimeExcluded } from '@/lib/exclusions'
+import { parse as csvParse } from 'csv-parse/sync'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -94,10 +95,11 @@ async function getMTechData(date: string) {
 }
 
 async function getGolferIdByMemberNumber(member_number: string): Promise<string | null> {
+  const trimmed = member_number.trim();
   const { data: golfer } = await supabase
     .from('golfers')
-    .select('id')
-    .eq('member_number', member_number)
+    .select('id, member_number')
+    .ilike('member_number', trimmed)
     .single();
   return golfer ? golfer.id : null;
 }
@@ -135,6 +137,13 @@ export async function GET(request: Request) {
     // 1. Get MTech data for the date
     const teeTimesRaw = await getMTechData(formattedDate)
 
+    // Use csv-parse to handle commas in quoted fields
+    const records = csvParse(teeTimesRaw.join('\n'), {
+      columns: false,
+      skip_empty_lines: true,
+      trim: true
+    });
+
     // Fetch exclusions for this date
     const { data: exclusions, error: exError } = await supabase
       .from('excluded_dates')
@@ -142,27 +151,19 @@ export async function GET(request: Request) {
       .eq('date', date)
     if (exError) throw exError
 
-    // Helper to normalize dates to YYYY-MM-DD
-    function normalizeDate(str: string): string {
-      // Accepts M/D/YYYY or MM/DD/YYYY and returns YYYY-MM-DD
-      const [month, day, year] = str.split(/[\/-]/).map(s => s.trim());
-      if (!year || !month || !day) return '';
-      return `${year.padStart(4, '20')}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
-    }
     const normalizedRequestedDate = date; // already in YYYY-MM-DD
 
     // MTech data has no header row; use fixed indices
-    // 0: TeeDate, 1: TeeTime, 2: MemberName, 3: GHIN, 4: MemberNo
-    const teeTimes = teeTimesRaw
-      .map(row => row.split(','))
-      .filter(cols => cols.length > 4 && cols[4].trim())
-      .filter(cols => normalizeDate(cols[0].trim()) === normalizedRequestedDate)
-      .filter(cols => !isTeeTimeExcluded(cols[1], exclusions))
-      .map(cols => ({
-        member_number: cols[4].trim(),
+    // 0: TeeDate, 1: TeeTime, 2: MemberName, 3: GHIN, 4: MemberNo, 5: MemberNo (if name has comma)
+    const teeTimes = (records as string[][])
+      .filter((cols: string[]) => cols.length >= 5 && (cols[4]?.trim() || cols[5]?.trim()))
+      .filter((cols: string[]) => normalizeDate(cols[0].trim()) === normalizedRequestedDate)
+      .filter((cols: string[]) => !isTeeTimeExcluded(cols[1], exclusions))
+      .map((cols: string[]) => ({
+        member_number: (cols[5]?.trim() || cols[4]?.trim()).replace(/\r/g, ''),
         time: cols[1].trim(),
         date: cols[0].trim()
-      }))
+      }));
 
     // Look up golfer IDs and prepare upserts
     const unmatchedMemberNumbers: string[] = []
@@ -174,86 +175,63 @@ export async function GET(request: Request) {
     if (fetchExistingError) {
       throw fetchExistingError
     }
+
     const teeTimeInserts = await Promise.all(
-      teeTimes.map(async (teeTime) => {
-        const golferId = await getGolferIdByMemberNumber(teeTime.member_number)
+      teeTimes.map(async (teeTime: { member_number: string; time: string; date: string }) => {
+        const golferId = await getGolferIdByMemberNumber(teeTime.member_number);
         if (!golferId) {
-          console.log(`No golfer found for member number: ${teeTime.member_number}`)
-          unmatchedMemberNumbers.push(teeTime.member_number)
-          return null
-        } else {
-          console.log(`Matched golfer for member number: ${teeTime.member_number} -> ${golferId}`)
+          unmatchedMemberNumbers.push(teeTime.member_number);
+          return null;
         }
         // Check if a tee_time already exists for this date, golfer, and tee_time
         const existing = existingTeeTimes?.find(
           t => t.golfer_id === golferId && t.tee_time === teeTime.time
-        )
+        );
         if (existing && (existing.posting_status === 'posted' || existing.posting_status === 'excused_no_post')) {
           // Do not overwrite posted or excused_no_post
-          return null
+          return null;
         }
         return {
           date: teeTime.date,
           golfer_id: golferId,
           tee_time: teeTime.time,
           posting_status: 'unexcused_no_post'
-        }
+        };
       })
-    )
-    const validTeeTimeInserts = teeTimeInserts.filter(insert => insert !== null)
+    );
 
-    // Upsert tee times
-    let upserted = 0
-    if (validTeeTimeInserts.length > 0) {
-      const { error } = await supabase
+    // Filter out null values and upsert the remaining tee_times
+    const validTeeTimeInserts = teeTimeInserts.filter(insert => insert !== null)
+    
+    try {
+      const { error: upsertError } = await supabase
         .from('tee_times')
         .upsert(validTeeTimeInserts, {
           onConflict: 'date,golfer_id,tee_time',
           ignoreDuplicates: false
         })
-      if (error) {
-        throw error
+      
+      if (upsertError) {
+        throw upsertError;
       }
-      upserted = validTeeTimeInserts.length
+      
+      return NextResponse.json({
+        message: 'Tee times loaded successfully',
+        unmatchedMemberNumbers,
+        upsertedCount: validTeeTimeInserts.length
+      });
+    } catch (error) {
+      console.error('Error during upsert:', error);
+      return NextResponse.json({ 
+        error: error instanceof Error ? error.message : 'An error occurred during upsert',
+        details: error
+      }, { status: 500 });
     }
-
-    // 3. Get Gmail client and USGA posts for the date
-    const gmail = await getGmailClient()
-    const postedGHINs = await getUSGAPosts(dateObj, gmail)
-
-    // 4. Update tee_times for this date and posted GHINs
-    let updatedRounds = 0
-    let postedGHINsArray: string[] = []
-    if (Array.isArray(postedGHINs) && postedGHINs.length > 0) {
-      postedGHINsArray = postedGHINs
-      // Find all golfers with these GHINs
-      const { data: golfers, error: golfersError } = await supabase
-        .from('golfers')
-        .select('id, ghin_number')
-        .in('ghin_number', postedGHINsArray)
-      if (golfersError) {
-        throw golfersError
-      }
-      const golferIds = golfers.map(g => g.id)
-      // Update tee_times for this date and these golfer_ids
-      const { error: updateError, data: updatedData } = await supabase
-        .from('tee_times')
-        .update({ posting_status: 'posted' })
-        .eq('date', date)
-        .in('golfer_id', golferIds)
-        .select('id')
-      if (updateError) {
-        throw updateError
-      }
-      updatedRounds = updatedData ? updatedData.length : 0
-    } else if (postedGHINs && typeof postedGHINs === 'object' && 'error' in postedGHINs) {
-      // If postedGHINs is an error object, return it in the response
-      return NextResponse.json({ success: false, ...postedGHINs, teeTimesLoaded: teeTimes.length, teeTimesInserted: upserted, unmatchedMemberNumbers })
-    }
-
-    return NextResponse.json({ success: true, teeTimesLoaded: teeTimes.length, teeTimesInserted: upserted, updatedRounds, unmatchedMemberNumbers, postedGHINs: postedGHINsArray })
   } catch (error) {
-    console.error('Error loading old data:', error)
-    return NextResponse.json({ error: 'Failed to load old data' }, { status: 500 })
+    console.error('Error loading old data:', error);
+    return NextResponse.json({ 
+      error: error instanceof Error ? error.message : 'An error occurred',
+      details: error
+    }, { status: 500 });
   }
-} 
+}

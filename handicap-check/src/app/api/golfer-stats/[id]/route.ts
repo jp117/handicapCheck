@@ -8,9 +8,10 @@ const supabase = createClient(
 
 export async function GET(
   request: Request,
-  { params }: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
-  console.log('Fetching stats for golfer:', params.id)
+  const { id } = await context.params;
+  console.log('Fetching stats for golfer:', id)
   
   try {
     const { searchParams } = new URL(request.url)
@@ -23,7 +24,7 @@ export async function GET(
     let query = supabase
       .from('tee_times')
       .select('posting_status')
-      .eq('golfer_id', params.id)
+      .eq('golfer_id', id)
 
     // Add date filters if provided
     if (startDate) {
