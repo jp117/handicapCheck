@@ -39,3 +39,14 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Custom type declarations
+*.d.ts
+
+# Local tokens and credentials
+token.json
+credentials.json
+
+# Python cache (if you ever run Python scripts)
+__pycache__/
+*.pyc

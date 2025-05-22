@@ -14,7 +14,9 @@ export default NextAuth({
       clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
       authorization: {
         params: {
-          scope: 'openid email profile'
+          scope: 'openid email profile https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send',
+          access_type: 'offline',
+          prompt: 'consent'
         }
       }
     })
@@ -35,11 +37,12 @@ export default NextAuth({
         return false
       }
 
-      // Upsert user into Supabase
+      // Upsert user into Supabase with refresh token
       await supabase.from('users').upsert({
         email: user.email,
         name: user.name,
         google_id: account?.providerAccountId,
+        gmail_refresh_token: account?.refresh_token // Save the refresh token
       }, { onConflict: 'email' })
 
       return true

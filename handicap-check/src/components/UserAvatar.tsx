@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { useSession, signOut } from 'next-auth/react'
+import Link from 'next/link'
 
 export default function UserAvatar() {
   const { data: session } = useSession()
@@ -40,6 +41,11 @@ export default function UserAvatar() {
                 {session.user.email}
               </div>
             </div>
+            {session.user.isAdmin && (
+              <Link href="/admin" className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                Admin Page
+              </Link>
+            )}
             <button
               onClick={() => signOut()}
               className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
