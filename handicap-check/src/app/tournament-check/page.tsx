@@ -27,7 +27,7 @@ export default function TournamentCheckPage() {
       const sheet = workbook.Sheets[workbook.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 });
       // Skip header row (row 0)
-      const numbers = (rows as any[][])
+      const numbers = (rows as unknown[][])
         .slice(1)
         .map(row => row[28])
         .filter(val => typeof val === 'string' || typeof val === 'number')
@@ -44,7 +44,7 @@ export default function TournamentCheckPage() {
         });
         const stats: GolferStat[] = await res.json();
         setLowPostGolfers(stats.filter(g => g.postPercentage < 80));
-      } catch (err) {
+      } catch {
         setLowPostGolfers([]);
       } finally {
         setLoadingStats(false);

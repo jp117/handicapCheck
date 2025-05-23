@@ -1,45 +1,42 @@
 import { NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import axios from 'axios'
-import { google } from 'googleapis'
-import { OAuth2Client } from 'google-auth-library'
-import { parseGHINData } from '@/lib/ghin'
 import { parse } from 'csv-parse/sync'
-import NextAuth from 'next-auth'
-import GoogleProvider from 'next-auth/providers/google'
 
-interface TeeTime {
-  name: string
-  time: string
-  ghin_number?: string
+interface TeeTimeRecord {
+  MemberNo: string;
+  TeeTime: string;
+  TeeDate: string;
 }
 
-interface GHINScore {
-  name: string
-  score: number
-  date: string
-  ghin_number?: string
+interface TeeTimeInsert {
+  date: string;
+  golfer_id: string;
+  tee_time: string;
+  posting_status: 'unexcused_no_post';
 }
 
 interface GolferInfo {
-  first_name: string
-  last_name: string
-  ghin_number?: string
-  email?: string
-  gender?: 'M' | 'F'
-  member_number?: string
+  id: string;
+  first_name: string;
+  middle_name?: string;
+  last_name: string;
+  suffix?: string;
+  ghin_number?: string;
+  email?: string;
+  gender?: 'M' | 'F';
+  member_number?: string;
 }
 
-// Initialize OAuth2 client
-const oauth2Client = new OAuth2Client(
-  process.env.GOOGLE_CLIENT_ID,
-  process.env.GOOGLE_CLIENT_SECRET,
-  process.env.GOOGLE_REDIRECT_URI
-)
+interface TeeTimeWithGolfer extends TeeTimeInsert {
+  golfer: GolferInfo;
+}
 
-oauth2Client.setCredentials({
-  refresh_token: process.env.GOOGLE_REFRESH_TOKEN
-})
+interface TeeTime {
+  member_number: string;
+  time: string;
+  date: string;
+}
 
 async function getGolferIdByMemberNumber(member_number: string): Promise<string | null> {
   const { data: golfer } = await supabase
@@ -81,8 +78,8 @@ export async function POST(request: Request) {
     
     // Transform CSV records to use only MemberNo for lookup
     const teeTimes = records
-      .filter((record: any) => record && record.MemberNo && record.TeeTime)
-      .map((record: any) => ({
+      .filter((record: TeeTimeRecord) => record && record.MemberNo && record.TeeTime)
+      .map((record: TeeTimeRecord) => ({
         member_number: record.MemberNo.trim(),
         time: record.TeeTime,
         date: record.TeeDate
@@ -101,10 +98,9 @@ export async function POST(request: Request) {
     
     // Process each tee time and get golfer records by member_number
     const teeTimeInserts = await Promise.all(
-      teeTimes.map(async (teeTime: any) => {
+      teeTimes.map(async (teeTime: TeeTime) => {
         const golferId = await getGolferIdByMemberNumber(teeTime.member_number)
         if (!golferId) {
-          // Optionally: log or skip this row
           return null;
         }
         return {
@@ -112,12 +108,12 @@ export async function POST(request: Request) {
           golfer_id: golferId,
           tee_time: teeTime.time,
           posting_status: 'unexcused_no_post'
-        }
+        } as TeeTimeInsert
       })
     )
     
     // Filter out any null inserts and store in Supabase
-    const validTeeTimeInserts = teeTimeInserts.filter(insert => insert !== null)
+    const validTeeTimeInserts = teeTimeInserts.filter((insert): insert is TeeTimeInsert => insert !== null)
     console.log('Number of tee time inserts:', validTeeTimeInserts.length)
     
     // Store tee times in Supabase
@@ -158,7 +154,7 @@ export async function POST(request: Request) {
     return NextResponse.json({
       date,
       totalGolfers: finalTeeTimes.length,
-      teeTimes: finalTeeTimes
+      teeTimes: finalTeeTimes as TeeTimeWithGolfer[]
     })
   } catch (error) {
     console.error('Error checking handicaps:', error)
@@ -167,29 +163,4 @@ export async function POST(request: Request) {
       { status: 500 }
     )
   }
-} 
-
-export default NextAuth({
-  providers: [
-    GoogleProvider({
-      clientId: process.env.GOOGLE_CLIENT_ID!,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
-      authorization: {
-        params: {
-          scope: 'openid email profile'
-        }
-      }
-    })
-  ],
-  callbacks: {
-    async signIn({ user, account, profile }) {
-      // Here you can upsert the user into your Supabase users table if you want
-      // You can also check if the user is an admin, etc.
-      return true
-    },
-    async session({ session, token, user }) {
-      // You can add custom fields to the session here
-      return session
-    }
-  }
-})
+}

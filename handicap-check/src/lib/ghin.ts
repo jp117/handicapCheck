@@ -1,6 +1,5 @@
-import { google } from 'googleapis'
-import { OAuth2Client } from 'google-auth-library'
 import * as XLSX from 'xlsx'
+import { gmail_v1 } from 'googleapis'
 
 interface GHINScore {
   name: string
@@ -9,7 +8,7 @@ interface GHINScore {
 }
 
 export async function parseGHINData(
-  gmail: any,
+  gmail: gmail_v1.Gmail,
   messageId: string,
   userId: string
 ): Promise<GHINScore[]> {
@@ -21,11 +20,11 @@ export async function parseGHINData(
     })
 
     // Find the XLSX attachment
-    const attachment = message.data.payload.parts?.find(
-      (part: any) => part.filename?.endsWith('.xlsx')
+    const attachment = message.data.payload?.parts?.find(
+      (part: gmail_v1.Schema$MessagePart) => part.filename?.endsWith('.xlsx')
     )
 
-    if (!attachment) {
+    if (!attachment || !attachment.body?.attachmentId) {
       throw new Error('No XLSX attachment found')
     }
 
@@ -38,18 +37,18 @@ export async function parseGHINData(
 
     // Decode the attachment data
     const data = attachmentData.data.data
-    const buffer = Buffer.from(data, 'base64')
+    const buffer = Buffer.from(data!, 'base64')
 
     // Parse the XLSX file
     const workbook = XLSX.read(buffer, { type: 'buffer' })
     const worksheet = workbook.Sheets[workbook.SheetNames[0]]
-    const rows = XLSX.utils.sheet_to_json(worksheet)
+    const rows = XLSX.utils.sheet_to_json(worksheet) as Record<string, unknown>[]
 
     // Process the rows into GHINScore objects
-    const scores: GHINScore[] = rows.map((row: any) => ({
-      name: row['Player Name'],
-      score: parseInt(row['Score']),
-      date: row['Date']
+    const scores: GHINScore[] = rows.map((row) => ({
+      name: String(row['Player Name'] ?? ''),
+      score: parseInt(String(row['Score'] ?? '0')),
+      date: String(row['Date'] ?? '')
     }))
 
     return scores

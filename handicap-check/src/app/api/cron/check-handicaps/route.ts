@@ -1,8 +1,23 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { google } from 'googleapis'
-const nodemailer = require('nodemailer')
+import nodemailer from 'nodemailer'
 import { isTeeTimeExcluded } from '@/lib/exclusions'
+
+interface TeeTimeRow {
+  [key: string]: string;
+}
+
+interface SoloPlayer extends TeeTimeRow {
+  status: 'excused';
+  excuseReason: 'solo';
+}
+
+interface NoPostPlayer {
+  name: string;
+  memberNumber: string;
+  [key: string]: unknown;
+}
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -14,7 +29,7 @@ async function getGmailClient() {
   const { data: user, error } = await supabase
     .from('users')
     .select('gmail_refresh_token, email')
-    .eq('email', 'nhcchandicapcheck@gmail.com') // <-- replace with your admin Gmail
+    .eq('email', 'nhcchandicapcheck@gmail.com')
     .single()
   if (error || !user?.gmail_refresh_token) throw new Error('No refresh token found for admin user')
 
@@ -33,11 +48,19 @@ async function getMTechData(date: string) {
     `https://www.clubmtech.com/cmtapi/teetimes/?apikey=${apiKey}&TheDate=${date}`
   )
   const data = await response.text()
-  return data.split('\n').slice(1) // Skip header row
+  return data.split('\n').slice(1).map(row => {
+    const columns = row.split(',');
+    return {
+      0: columns[0] || '',
+      1: columns[1] || '',
+      2: columns[2] || '',
+      // Add more columns as needed
+    } as TeeTimeRow;
+  });
 }
 
-async function checkSoloPlayers(teeTimes: any[]) {
-  const timeGroups = new Map()
+async function checkSoloPlayers(teeTimes: TeeTimeRow[]) {
+  const timeGroups = new Map<string, TeeTimeRow[]>()
   
   // Group players by tee time
   teeTimes.forEach(time => {
@@ -45,12 +68,12 @@ async function checkSoloPlayers(teeTimes: any[]) {
     if (!timeGroups.has(timeStr)) {
       timeGroups.set(timeStr, [])
     }
-    timeGroups.get(timeStr).push(time)
+    timeGroups.get(timeStr)?.push(time)
   })
 
   // Mark solo players as excused
-  const soloPlayers = []
-  for (const [time, players] of timeGroups) {
+  const soloPlayers: SoloPlayer[] = []
+  for (const players of timeGroups.values()) {
     if (players.length === 1) {
       soloPlayers.push({
         ...players[0],
@@ -63,7 +86,7 @@ async function checkSoloPlayers(teeTimes: any[]) {
   return soloPlayers
 }
 
-async function getUSGAPosts(date: Date, gmail: any) {
+async function getUSGAPosts(date: Date, gmail: ReturnType<typeof google.gmail>) {
   const nextDay = new Date(date)
   nextDay.setDate(nextDay.getDate() + 1)
   const searchQuery = `from:reporting@ghin.com subject:"Auto-Generated Scheduled Report - Played / Posted Report (Player Rounds)" after:${nextDay.toISOString().split('T')[0]} before:${new Date(nextDay.getTime() + 86400000).toISOString().split('T')[0]}`
@@ -72,7 +95,7 @@ async function getUSGAPosts(date: Date, gmail: any) {
     q: searchQuery
   })
   if (!response.data.messages?.length) return []
-  const message = await gmail.users.messages.get({
+  await gmail.users.messages.get({
     userId: 'me',
     id: response.data.messages[0].id!
   })
@@ -80,7 +103,7 @@ async function getUSGAPosts(date: Date, gmail: any) {
   return []
 }
 
-async function sendNoPostEmail(menNoPost: any[], womenNoPost: any[], date: string) {
+async function sendNoPostEmail(menNoPost: NoPostPlayer[], womenNoPost: NoPostPlayer[], date: string) {
   const transporter = nodemailer.createTransport({
     service: 'gmail',
     auth: {
@@ -126,7 +149,7 @@ export async function GET() {
     })
     
     // 2. Check for solo players
-    const soloPlayers = await checkSoloPlayers(teeTimes)
+    await checkSoloPlayers(teeTimes)
     
     // 3. Get Gmail client using refresh token
     const gmail = await getGmailClient()
@@ -156,7 +179,7 @@ export async function GET() {
     }
 
     // 6. Send email
-    await sendNoPostEmail(menNoPost, womenNoPost, dateStr)
+    await sendNoPostEmail(menNoPost as NoPostPlayer[], womenNoPost as NoPostPlayer[], dateStr)
 
     return NextResponse.json({ success: true })
   } catch (error) {

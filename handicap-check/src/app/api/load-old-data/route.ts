@@ -4,6 +4,22 @@ import { google } from 'googleapis'
 import * as XLSX from 'xlsx'
 import { isTeeTimeExcluded } from '@/lib/exclusions'
 import { parse as csvParse } from 'csv-parse/sync'
+import { gmail_v1 } from 'googleapis'
+
+interface TeeTimeRecord {
+  member_number: string;
+  time: string;
+  date: string;
+  name: string;
+}
+
+interface TeeTimeInsert {
+  date: string;
+  golfer_id: string;
+  tee_time: string;
+  posting_status: 'posted' | 'excused_no_post' | 'unexcused_no_post';
+  excuse_reason: string | null;
+}
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -27,7 +43,7 @@ async function getGmailClient() {
   return google.gmail({ version: 'v1', auth: oAuth2Client })
 }
 
-async function getUSGAPosts(date: Date, gmail: any) {
+async function getUSGAPosts(date: Date, gmail: ReturnType<typeof google.gmail>) {
   // Find the email for the day after the given date
   const nextDay = new Date(date)
   nextDay.setDate(nextDay.getDate() + 1)
@@ -45,10 +61,16 @@ async function getUSGAPosts(date: Date, gmail: any) {
   })
 
   // Find the XLSX attachment
-  const parts = message.data.payload.parts || []
-  const xlsxFilenames = parts.filter((part: any) => part.filename && part.filename.endsWith('.xlsx')).map((part: any) => part.filename)
+  const parts = message.data.payload?.parts || []
+  const xlsxFilenames = parts
+    .filter((part): part is gmail_v1.Schema$MessagePart & { filename: string } => 
+      Boolean(part.filename?.endsWith('.xlsx')))
+    .map(part => part.filename)
   const xlsxPart = parts.find(
-    (part: any) => part.filename && part.filename.endsWith('.xlsx') && part.filename.toLowerCase().includes('played')
+    (part): part is gmail_v1.Schema$MessagePart & { filename: string; body: { attachmentId: string } } => 
+      Boolean(part.filename?.endsWith('.xlsx') && 
+              part.filename.toLowerCase().includes('played') && 
+              part.body?.attachmentId)
   )
   if (!xlsxPart) {
     console.error('No XLSX attachment found in USGA email. XLSX filenames found:', xlsxFilenames)
@@ -61,7 +83,7 @@ async function getUSGAPosts(date: Date, gmail: any) {
     messageId: message.data.id!,
     id: xlsxPart.body.attachmentId
   })
-  const buffer = Buffer.from(attachmentData.data.data, 'base64')
+  const buffer = Buffer.from(attachmentData.data.data!, 'base64')
 
   // Parse the XLSX file
   const workbook = XLSX.read(buffer, { type: 'buffer' })
@@ -69,16 +91,16 @@ async function getUSGAPosts(date: Date, gmail: any) {
   const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 })
 
   // Find the header row and column indices
-  const header = rows[0] as any[]
-  const ghinIdx = header.findIndex((h: any) => String(h).toLowerCase().includes('ghin'))
-  const postedIdx = header.findIndex((h: any) => String(h).toLowerCase().includes('total posted on date played'))
+  const header = rows[0] as string[]
+  const ghinIdx = header.findIndex(h => String(h).toLowerCase().includes('ghin'))
+  const postedIdx = header.findIndex(h => String(h).toLowerCase().includes('total posted on date played'))
   if (ghinIdx === -1 || postedIdx === -1) {
     console.error('Could not find GHIN or posted columns in XLSX')
     return []
   }
 
   // Collect GHIN numbers where posted > 0
-  const postedGHINs = (rows.slice(1) as any[][])
+  const postedGHINs = (rows.slice(1) as (string | number)[][])
     .filter(row => row[ghinIdx] && Number(row[postedIdx]) > 0)
     .map(row => String(row[ghinIdx]).trim())
 
@@ -92,16 +114,6 @@ async function getMTechData(date: string) {
   )
   const data = await response.text()
   return data.split('\n').slice(1) // Skip header row
-}
-
-async function getGolferIdByMemberNumber(member_number: string): Promise<string | null> {
-  const trimmed = member_number.trim();
-  const { data: golfer } = await supabase
-    .from('golfers')
-    .select('id, member_number')
-    .ilike('member_number', trimmed)
-    .single();
-  return golfer ? golfer.id : null;
 }
 
 // Helper to normalize dates to YYYY-MM-DD
@@ -157,7 +169,7 @@ export async function GET(request: Request) {
     const gmail = await getGmailClient();
     let postedGHINs = await getUSGAPosts(dateObj, gmail);
     if (!Array.isArray(postedGHINs)) postedGHINs = [];
-    postedGHINs = postedGHINs.map((g: string) => String(g).trim());
+    postedGHINs = postedGHINs.map(g => String(g).trim());
 
     // Parse tee times from MTech data
     const teeTimes = (records as string[][])
@@ -179,7 +191,7 @@ export async function GET(request: Request) {
       }
       groups[key].push(teeTime);
       return groups;
-    }, {} as Record<string, typeof teeTimes>);
+    }, {} as Record<string, TeeTimeRecord[]>);
 
     const unmatchedMemberNumbers: string[] = [];
     const { data: existingTeeTimes, error: fetchExistingError } = await supabase
@@ -233,61 +245,62 @@ export async function GET(request: Request) {
           tee_time: teeTime.time,
           posting_status,
           excuse_reason
-        };
+        } as TeeTimeInsert;
       })
     );
 
     // Filter out null values and normalize date for DB insert (YYYY-MM-DD)
-    const validTeeTimeInserts = teeTimeInserts.filter(insert => insert !== null).map(t => ({
-      ...t,
-      date: normalizeDate(t.date)
-    }));
+    const validTeeTimeInserts = teeTimeInserts
+      .filter((insert): insert is TeeTimeInsert => insert !== null)
+      .map(t => ({
+        ...t,
+        date: normalizeDate(t.date)
+      }));
 
     // Insert each tee time individually to avoid batch failure on unique violation
     let insertedCount = 0;
     let skippedCount = 0;
     let excusedInserted = 0;
     let unexcusedInserted = 0;
-    let postedInserted = 0;
-    for (const teeTime of validTeeTimeInserts) {
-      try {
-        const { error: insertError } = await supabase
-          .from('tee_times')
-          .insert(teeTime)
-          .select();
-        if (insertError) {
-          if (insertError.code === '23505') {
-            skippedCount++;
-            continue;
-          } else {
-            throw insertError;
-          }
-        }
+
+    for (const insert of validTeeTimeInserts) {
+      const { error } = await supabase
+        .from('tee_times')
+        .upsert(insert, {
+          onConflict: 'date,golfer_id,tee_time',
+          ignoreDuplicates: false
+        });
+
+      if (error) {
+        console.error('Error inserting tee time:', error);
+        skippedCount++;
+      } else {
         insertedCount++;
-        if (teeTime.posting_status === 'excused_no_post') excusedInserted++;
-        if (teeTime.posting_status === 'unexcused_no_post') unexcusedInserted++;
-        if (teeTime.posting_status === 'posted') postedInserted++;
-      } catch (err) {
-        console.error('Error inserting tee time:', teeTime, err);
-        throw err;
+        if (insert.posting_status === 'excused_no_post') {
+          excusedInserted++;
+        } else if (insert.posting_status === 'unexcused_no_post') {
+          unexcusedInserted++;
+        }
       }
     }
 
     return NextResponse.json({
-      message: 'Tee times loaded successfully',
-      totalProcessed: validTeeTimeInserts.length,
-      insertedCount,
-      skippedCount,
-      postedInserted,
-      excusedInserted,
-      unexcusedInserted,
-      unmatchedMemberNumbers
+      success: true,
+      stats: {
+        total: teeTimes.length,
+        inserted: insertedCount,
+        skipped: skippedCount,
+        excused: excusedInserted,
+        unexcused: unexcusedInserted,
+        unmatched: unmatchedMemberNumbers.length
+      },
+      unmatched: unmatchedMemberNumbers
     });
   } catch (error) {
     console.error('Error loading old data:', error);
-    return NextResponse.json({ 
-      error: error instanceof Error ? error.message : 'An error occurred',
-      details: error
-    }, { status: 500 });
+    return NextResponse.json(
+      { error: 'Failed to load old data' },
+      { status: 500 }
+    );
   }
 }

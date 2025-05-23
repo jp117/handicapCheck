@@ -12,10 +12,19 @@ interface Golfer {
   handicap_index: number
 }
 
+interface Round {
+  id: string
+  date: string
+  tee_time: string
+  posting_status: 'posted' | 'excused_no_post' | 'unexcused_no_post'
+  excuse_reason?: string
+  golfer_id: string
+}
+
 export default function Home() {
   const { data: session, status } = useSession()
   const [selectedGolfer, setSelectedGolfer] = useState<Golfer | null>(null)
-  const [golferRounds, setGolferRounds] = useState<any[]>([])
+  const [golferRounds, setGolferRounds] = useState<Round[]>([])
   const [statsRefreshKey, setStatsRefreshKey] = useState(0)
 
   const handleGolferSelect = async (golfer: Golfer) => {
@@ -30,7 +39,7 @@ export default function Home() {
     }
   }
 
-  const fetchRounds = async (golferId: string) => {
+  const fetchRounds = async (golferId: string): Promise<Round[]> => {
     try {
       const response = await fetch(`/api/golfer-rounds/${golferId}`)
       if (!response.ok) {
@@ -43,7 +52,7 @@ export default function Home() {
     }
   }
 
-  const handleUpdateRound = async (roundId: string, status: string, excuseReason?: string) => {
+  const handleUpdateRound = async (roundId: string, status: Round['posting_status'], excuseReason?: string) => {
     try {
       const response = await fetch(`/api/update-round/${roundId}`, {
         method: 'PUT',

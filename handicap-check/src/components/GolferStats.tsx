@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import DateFilter from './DateFilter'
 
 interface Stats {
@@ -21,10 +21,8 @@ interface GolferStatsProps {
 
 export default function GolferStats({ golferId, golferName }: GolferStatsProps) {
   const [stats, setStats] = useState<Stats | null>(null)
-  const [isLoading, setIsLoading] = useState(false)
 
-  const fetchStats = async (startDate?: string | null, endDate?: string | null) => {
-    setIsLoading(true)
+  const fetchStats = useCallback(async (startDate?: string | null, endDate?: string | null) => {
     try {
       const url = new URL(`/api/golfer-stats/${golferId}`, window.location.origin)
       if (startDate) url.searchParams.set('startDate', startDate)
@@ -35,14 +33,12 @@ export default function GolferStats({ golferId, golferName }: GolferStatsProps) 
       setStats(data)
     } catch (error) {
       console.error('Error fetching stats:', error)
-    } finally {
-      setIsLoading(false)
     }
-  }
+  }, [golferId])
 
   useEffect(() => {
     fetchStats()
-  }, [golferId])
+  }, [golferId, fetchStats])
 
   const handleDateFilterChange = (startDate: string | null, endDate: string | null) => {
     fetchStats(startDate, endDate)
@@ -64,7 +60,7 @@ export default function GolferStats({ golferId, golferName }: GolferStatsProps) 
     <div className="bg-white shadow sm:rounded-lg">
       <div className="px-4 py-5 sm:p-6">
         <div className="flex justify-between items-center mb-5">
-          <h3 className="text-lg font-medium leading-6 text-gray-900">{golferName}'s Posting History</h3>
+          <h3 className="text-lg font-medium leading-6 text-gray-900">{golferName}&apos;s Posting History</h3>
           <DateFilter onFilterChange={handleDateFilterChange} />
         </div>
         <div className="mt-5 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">

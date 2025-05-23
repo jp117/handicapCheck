@@ -12,11 +12,11 @@ function normalizeTime(str: string | null): string | null {
     ampm = s.match(/am|pm/i)?.[0].toUpperCase() || '';
     s = s.replace(/am|pm/i, '').trim();
   }
-  let [timePart] = s.split(' ');
-  let [h, m] = timePart.split(':');
+  const [timePart] = s.split(' ');
+  const [h, m] = timePart.split(':');
   if (!h || !m) return str;
   let hour = parseInt(h, 10);
-  let minute = m.length > 2 ? m.slice(0, 2) : m;
+  const minute = m.length > 2 ? m.slice(0, 2) : m;
   if (ampm) {
     if (ampm === 'PM' && hour < 12) hour += 12;
     if (ampm === 'AM' && hour === 12) hour = 0;
@@ -29,7 +29,7 @@ export function isTeeTimeExcluded(
   exclusions: Exclusion[]
 ): boolean {
   if (!exclusions || exclusions.length === 0) return false;
-  let t = teeTimeStr.trim();
+  const t = teeTimeStr.trim();
   let time: string | null = null;
   if (/\d{1,2}:\d{2}/.test(t)) {
     time = t.match(/\d{1,2}:\d{2}(?::\d{2})?(?:\s*[APMapm]{2})?/g)?.[0] || null;

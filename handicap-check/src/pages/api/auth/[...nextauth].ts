@@ -1,13 +1,22 @@
-import NextAuth from 'next-auth'
+import NextAuth from 'next-auth/next'
 import GoogleProvider from 'next-auth/providers/google'
 import { createClient } from '@supabase/supabase-js'
+import type { User } from 'next-auth'
+
+interface AppUser extends User {
+  email?: string;
+  name?: string;
+  isApproved?: boolean;
+  isAdmin?: boolean;
+  hasGmailRefreshToken?: boolean;
+}
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY! // Use service role for server-side upserts
 )
 
-export default NextAuth({
+const authOptions = {
   providers: [
     GoogleProvider({
       clientId: process.env.GOOGLE_CLIENT_ID!,
@@ -22,45 +31,56 @@ export default NextAuth({
     })
   ],
   callbacks: {
-    async signIn({ user, account, profile }) {
-      if (!user.email) return false
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    async signIn(params: any) {
+      const { user, account } = params;
+      const typedUser = user as AppUser;
+      if (!typedUser.email) return false;
 
       // Check if user exists and is approved
       const { data: existingUser } = await supabase
         .from('users')
         .select('is_approved')
-        .eq('email', user.email)
-        .single()
+        .eq('email', typedUser.email)
+        .single();
 
       // If user exists but is not approved, deny access
       if (existingUser && !existingUser.is_approved) {
-        return false
+        return false;
       }
 
       // Upsert user into Supabase with refresh token
-      await supabase.from('users').upsert({
-        email: user.email,
-        name: user.name,
+      const upsertData: Record<string, unknown> = {
+        email: typedUser.email,
+        name: typedUser.name,
         google_id: account?.providerAccountId,
-        gmail_refresh_token: account?.refresh_token // Save the refresh token
-      }, { onConflict: 'email' })
+      };
+      if (account?.refresh_token) {
+        upsertData.gmail_refresh_token = account.refresh_token;
+      }
+      await supabase.from('users').upsert(upsertData, { onConflict: 'email' });
 
-      return true
+      return true;
     },
-    async session({ session, token, user }) {
-      if (session.user?.email) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    async session(params: any) {
+      const { session } = params;
+      const userObj = session.user as AppUser;
+      if (userObj?.email) {
         // Get user's approval status
         const { data: userData } = await supabase
           .from('users')
           .select('is_approved, is_admin')
-          .eq('email', session.user.email)
-          .single()
+          .eq('email', userObj.email)
+          .single();
 
         // Add approval status to session
-        session.user.isApproved = userData?.is_approved ?? false
-        session.user.isAdmin = userData?.is_admin ?? false
+        userObj.isApproved = userData?.is_approved ?? false;
+        userObj.isAdmin = userData?.is_admin ?? false;
       }
-      return session
+      return session;
     }
   }
-}) 
+}
+
+export default NextAuth(authOptions) 

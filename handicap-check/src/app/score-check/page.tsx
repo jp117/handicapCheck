@@ -155,7 +155,7 @@ export default function ScoreCheckPage() {
         </div>
         <div className="flex space-x-4">
           <div className="flex-1">
-            <label className="block text-gray-900 font-medium mb-1">Player's Index</label>
+            <label className="block text-gray-900 font-medium mb-1">Player&apos;s Index</label>
             <input
               type="number"
               value={index}
@@ -165,7 +165,7 @@ export default function ScoreCheckPage() {
             />
           </div>
           <div className="flex-1">
-            <label className="block text-gray-900 font-medium mb-1">Player's Score</label>
+            <label className="block text-gray-900 font-medium mb-1">Player&apos;s Score</label>
             <input
               type="number"
               value={score}

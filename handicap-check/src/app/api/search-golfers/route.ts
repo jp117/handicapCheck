@@ -1,6 +1,18 @@
 import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
 
+interface Golfer {
+  id: string;
+  first_name: string;
+  last_name: string;
+  suffix?: string;
+}
+
+interface TransformedGolfer {
+  id: string;
+  name: string;
+}
+
 // Log the environment variables (without the actual values)
 console.log('Supabase URL exists:', !!process.env.NEXT_PUBLIC_SUPABASE_URL)
 console.log('Supabase Anon Key exists:', !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)
@@ -22,7 +34,7 @@ export async function GET(request: Request) {
 
   try {
     // First, check if we can connect to Supabase
-    const { data: testData, error: testError } = await supabase
+    const { error: testError } = await supabase
       .from('golfers')
       .select('count')
       .limit(1)
@@ -54,7 +66,7 @@ export async function GET(request: Request) {
     }
 
     // Transform the data to match the expected interface
-    const transformedData = data.map(golfer => ({
+    const transformedData: TransformedGolfer[] = (data as Golfer[]).map(golfer => ({
       id: golfer.id,
       name: `${golfer.first_name} ${golfer.last_name}${golfer.suffix ? ` ${golfer.suffix}` : ''}`
     }))

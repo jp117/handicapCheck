@@ -4,6 +4,19 @@ import { useState, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
 import Link from 'next/link'
 
+interface ApiResponse {
+  error?: string;
+  [key: string]: unknown;
+}
+
+interface ExcludedDate {
+  id: string;
+  date: string;
+  start_time: string | null;
+  end_time: string | null;
+  reason: string | null;
+}
+
 function getToday() {
   const d = new Date();
   return d.toISOString().slice(0, 10);
@@ -11,12 +24,12 @@ function getToday() {
 
 export default function AdminPage() {
   const { data: session, status } = useSession();
-  const [result, setResult] = useState<any>(null);
+  const [result, setResult] = useState<ApiResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [date, setDate] = useState(getToday());
 
   // Excluded dates state
-  const [excluded, setExcluded] = useState<any[]>([]);
+  const [excluded, setExcluded] = useState<ExcludedDate[]>([]);
   const [exDate, setExDate] = useState(getToday());
   const [exStart, setExStart] = useState('');
   const [exEnd, setExEnd] = useState('');
@@ -35,15 +48,16 @@ export default function AdminPage() {
       const res = await fetch('/api/excluded-dates');
       const data = await res.json();
       setExcluded(Array.isArray(data) ? data : []);
-    } catch (e) {
-      setExError('Failed to load exclusions');
+    } catch (error) {
+      console.error('Error fetching excluded dates:', error);
+      setExError(error instanceof Error ? error.message : 'Failed to load exclusions');
     } finally {
       setExLoading(false);
     }
   }
 
-  async function addExcluded(e: React.FormEvent) {
-    e.preventDefault();
+  async function addExcluded(event: React.FormEvent) {
+    event.preventDefault();
     setExLoading(true);
     setExError('');
     try {
@@ -57,14 +71,18 @@ export default function AdminPage() {
           reason: exReason
         })
       });
-      if (!res.ok) throw new Error('Failed to add exclusion');
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.error || 'Failed to add exclusion');
+      }
       setExDate(getToday());
       setExStart('');
       setExEnd('');
       setExReason('');
       fetchExcluded();
-    } catch (e) {
-      setExError('Failed to add exclusion');
+    } catch (error) {
+      console.error('Error adding excluded date:', error);
+      setExError(error instanceof Error ? error.message : 'Failed to add exclusion');
     } finally {
       setExLoading(false);
     }
@@ -79,10 +97,14 @@ export default function AdminPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id })
       });
-      if (!res.ok) throw new Error('Failed to delete exclusion');
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.error || 'Failed to delete exclusion');
+      }
       fetchExcluded();
-    } catch (e) {
-      setExError('Failed to delete exclusion');
+    } catch (error) {
+      console.error('Error deleting excluded date:', error);
+      setExError(error instanceof Error ? error.message : 'Failed to delete exclusion');
     } finally {
       setExLoading(false);
     }

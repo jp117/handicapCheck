@@ -1,13 +1,29 @@
 import NextAuth from 'next-auth'
 import GoogleProvider from 'next-auth/providers/google'
 import { createClient } from '@supabase/supabase-js'
+import type { Session, User } from 'next-auth'
+import type { AdapterUser } from 'next-auth/adapters'
+
+interface AppUser extends User {
+  email?: string;
+  name?: string;
+  isApproved?: boolean;
+  isAdmin?: boolean;
+  hasGmailRefreshToken?: boolean;
+}
+
+interface AccountLike {
+  providerAccountId?: string;
+  refresh_token?: string;
+  [key: string]: unknown;
+}
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
-export default NextAuth({
+const authOptions = {
   providers: [
     GoogleProvider({
       id: 'google-admin',
@@ -23,8 +39,9 @@ export default NextAuth({
     })
   ],
   callbacks: {
-    async signIn({ user, account, profile }) {
-      if (!user.email) return false
+    async signIn({ user, account }: { user: AdapterUser | User; account: AccountLike | null }) {
+      const typedUser = user as AppUser
+      if (!typedUser.email) return false
 
       // Debug: log the account object
       console.log('ACCOUNT OBJECT:', account);
@@ -33,15 +50,15 @@ export default NextAuth({
       const { data: existingUser } = await supabase
         .from('users')
         .select('is_admin')
-        .eq('email', user.email)
+        .eq('email', typedUser.email)
         .single()
 
       // Only require refresh token for admins
       if (existingUser?.is_admin) {
         // Only save the refresh token if it exists and is non-empty
-        const upsertData: any = {
-          email: user.email,
-          name: user.name,
+        const upsertData: Record<string, unknown> = {
+          email: typedUser.email,
+          name: typedUser.name,
           google_id: account?.providerAccountId
         };
         if (account?.refresh_token) {
@@ -50,29 +67,32 @@ export default NextAuth({
         await supabase.from('users').upsert(upsertData, { onConflict: 'email' });
       } else {
         // For non-admins, do not save the refresh token
-        await supabase.from('users').upsert({
-          email: user.email,
-          name: user.name,
+        const upsertData: Record<string, unknown> = {
+          email: typedUser.email,
+          name: typedUser.name,
           google_id: account?.providerAccountId
-          // No refresh token
-        }, { onConflict: 'email' })
+        };
+        await supabase.from('users').upsert(upsertData, { onConflict: 'email' })
       }
 
       return true;
     },
-    async session({ session, token, user }) {
-      if (session.user?.email) {
+    async session({ session }: { session: Session }) {
+      const userObj = session.user as AppUser
+      if (userObj?.email) {
         const { data: userData } = await supabase
           .from('users')
           .select('is_approved, is_admin, gmail_refresh_token')
-          .eq('email', session.user.email)
+          .eq('email', userObj.email)
           .single()
 
-        session.user.isApproved = userData?.is_approved ?? false
-        session.user.isAdmin = userData?.is_admin ?? false
-        session.user.hasGmailRefreshToken = !!userData?.gmail_refresh_token
+        userObj.isApproved = userData?.is_approved ?? false
+        userObj.isAdmin = userData?.is_admin ?? false
+        userObj.hasGmailRefreshToken = !!userData?.gmail_refresh_token
       }
       return session
     }
   }
-}) 
+}
+
+export default NextAuth(authOptions) 
