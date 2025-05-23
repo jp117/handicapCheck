@@ -1,9 +1,8 @@
 import NextAuth from 'next-auth/next'
 import GoogleProvider from 'next-auth/providers/google'
 import { createClient } from '@supabase/supabase-js'
-import type { User } from 'next-auth'
 
-interface AppUser extends User {
+interface AppUser {
   email?: string;
   name?: string;
   isApproved?: boolean;
@@ -13,12 +12,13 @@ interface AppUser extends User {
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY! // Use service role for server-side upserts
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
 const authOptions = {
   providers: [
     GoogleProvider({
+      id: 'google-admin',
       clientId: process.env.GOOGLE_CLIENT_ID!,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
       authorization: {
@@ -34,51 +34,59 @@ const authOptions = {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     async signIn(params: any) {
       const { user, account } = params;
-      const typedUser = user as AppUser;
-      if (!typedUser.email) return false;
+      const typedUser = user as AppUser
+      if (!typedUser.email) return false
 
-      // Check if user exists and is approved
+      // Debug: log the account object
+      console.log('ACCOUNT OBJECT:', account);
+
+      // Fetch user from DB
       const { data: existingUser } = await supabase
         .from('users')
-        .select('is_approved')
+        .select('is_admin')
         .eq('email', typedUser.email)
-        .single();
+        .single()
 
-      // If user exists but is not approved, deny access
-      if (existingUser && !existingUser.is_approved) {
-        return false;
+      // Only require refresh token for admins
+      if (existingUser?.is_admin) {
+        // Only save the refresh token if it exists and is non-empty
+        const upsertData: Record<string, unknown> = {
+          email: typedUser.email,
+          name: typedUser.name,
+          google_id: account?.providerAccountId
+        };
+        if (account?.refresh_token) {
+          upsertData.gmail_refresh_token = account.refresh_token;
+        }
+        await supabase.from('users').upsert(upsertData, { onConflict: 'email' });
+      } else {
+        // For non-admins, do not save the refresh token
+        const upsertData: Record<string, unknown> = {
+          email: typedUser.email,
+          name: typedUser.name,
+          google_id: account?.providerAccountId
+        };
+        await supabase.from('users').upsert(upsertData, { onConflict: 'email' })
       }
-
-      // Upsert user into Supabase with refresh token
-      const upsertData: Record<string, unknown> = {
-        email: typedUser.email,
-        name: typedUser.name,
-        google_id: account?.providerAccountId,
-      };
-      if (account?.refresh_token) {
-        upsertData.gmail_refresh_token = account.refresh_token;
-      }
-      await supabase.from('users').upsert(upsertData, { onConflict: 'email' });
 
       return true;
     },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     async session(params: any) {
       const { session } = params;
-      const userObj = session.user as AppUser;
+      const userObj = session.user as AppUser
       if (userObj?.email) {
-        // Get user's approval status
         const { data: userData } = await supabase
           .from('users')
-          .select('is_approved, is_admin')
+          .select('is_approved, is_admin, gmail_refresh_token')
           .eq('email', userObj.email)
-          .single();
+          .single()
 
-        // Add approval status to session
-        userObj.isApproved = userData?.is_approved ?? false;
-        userObj.isAdmin = userData?.is_admin ?? false;
+        userObj.isApproved = userData?.is_approved ?? false
+        userObj.isAdmin = userData?.is_admin ?? false
+        userObj.hasGmailRefreshToken = !!userData?.gmail_refresh_token
       }
-      return session;
+      return session
     }
   }
 }
