@@ -1,6 +1,8 @@
 'use client'
 
 import { useState } from 'react';
+import { useSession } from 'next-auth/react'
+import type { Session } from 'next-auth'
 
 const TEES = [
   {
@@ -36,6 +38,7 @@ const TEES = [
 ];
 
 export default function ScoreCheckPage() {
+  const { data: session, status } = useSession() as { data: Session | null, status: string }
   const [tee, setTee] = useState('black');
   const [slope, setSlope] = useState(TEES[0].slope);
   const [rating, setRating] = useState(TEES[0].rating);
@@ -47,6 +50,28 @@ export default function ScoreCheckPage() {
     netScore: number;
     zScore?: number;
   }>(null);
+
+  if (status === 'loading') {
+    return (
+      <div className="flex items-center justify-center min-h-[50vh]">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-300 border-t-indigo-600" />
+      </div>
+    )
+  }
+  if (!session || !session.user) {
+    return (
+      <div className="flex items-center justify-center min-h-[50vh]">
+        <p className="text-lg text-gray-900 font-medium">Please sign in to continue.</p>
+      </div>
+    )
+  }
+  if (!session.user.isApproved) {
+    return (
+      <div className="flex items-center justify-center min-h-[50vh]">
+        <p className="text-lg text-gray-900 font-medium">Your account is pending approval. Please contact an administrator.</p>
+      </div>
+    )
+  }
 
   const handleTeeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const selected = TEES.find(t => t.value === e.target.value);
