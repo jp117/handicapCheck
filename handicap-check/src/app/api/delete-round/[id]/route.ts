@@ -8,9 +8,9 @@ const supabase = createClient(
 
 export async function DELETE(
   request: Request,
-  { params }: { params: { id: string } }
+  context: { params: { id: string } }
 ) {
-  const { id } = params;
+  const { id } = context.params;
   if (!id) {
     return NextResponse.json({ error: 'Missing round ID' }, { status: 400 });
   }
