@@ -1,9 +1,8 @@
 import NextAuth from 'next-auth/next'
 import GoogleProvider from 'next-auth/providers/google'
 import { createClient } from '@supabase/supabase-js'
-import type { User } from 'next-auth'
 
-interface AppUser extends User {
+interface AppUser {
   email?: string;
   name?: string;
   isApproved?: boolean;
