@@ -13,9 +13,10 @@ interface Round {
 interface GolferRoundsProps {
   rounds: Round[]
   onUpdateRound: (roundId: string, status: Round['posting_status'], excuseReason?: string) => Promise<void>
+  onDeleteRound?: (roundId: string) => Promise<void>
 }
 
-export default function GolferRounds({ rounds, onUpdateRound }: GolferRoundsProps) {
+export default function GolferRounds({ rounds, onUpdateRound, onDeleteRound }: GolferRoundsProps) {
   const [editingRound, setEditingRound] = useState<string | null>(null)
   const [excuseReason, setExcuseReason] = useState('')
   const [isUpdating, setIsUpdating] = useState(false)
@@ -140,18 +141,32 @@ export default function GolferRounds({ rounds, onUpdateRound }: GolferRoundsProp
                           </div>
                         </div>
                       ) : (
-                        <button
-                          onClick={() => {
-                            setEditingRound(round.id)
-                            setEditingStatus(round.posting_status)
-                            if (round.posting_status === 'excused_no_post') {
-                              setExcuseReason(round.excuse_reason || '')
-                            }
-                          }}
-                          className="inline-flex items-center px-2.5 py-1.5 border border-transparent text-xs font-medium rounded text-indigo-700 bg-indigo-100 hover:bg-indigo-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-                        >
-                          Edit
-                        </button>
+                        <div className="flex space-x-2">
+                          <button
+                            onClick={() => {
+                              setEditingRound(round.id)
+                              setEditingStatus(round.posting_status)
+                              if (round.posting_status === 'excused_no_post') {
+                                setExcuseReason(round.excuse_reason || '')
+                              }
+                            }}
+                            className="inline-flex items-center px-2.5 py-1.5 border border-transparent text-xs font-medium rounded text-indigo-700 bg-indigo-100 hover:bg-indigo-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                          >
+                            Edit
+                          </button>
+                          {onDeleteRound && (
+                            <button
+                              onClick={() => {
+                                if (window.confirm('Are you sure you want to delete this round? This action cannot be undone.')) {
+                                  onDeleteRound(round.id)
+                                }
+                              }}
+                              className="inline-flex items-center px-2.5 py-1.5 border border-red-300 text-xs font-medium rounded text-red-700 bg-red-100 hover:bg-red-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
+                            >
+                              Delete
+                            </button>
+                          )}
+                        </div>
                       )}
                     </td>
                   </tr>

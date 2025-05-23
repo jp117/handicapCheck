@@ -1,9 +1,12 @@
+
+
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import Providers from './providers'
 import AuthNav from '@/components/AuthNav'
 import { google } from 'googleapis';
+import Link from 'next/link';
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -26,8 +29,10 @@ export default function RootLayout({
               <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                 <div className="flex justify-between h-16">
                   <div className="flex">
-                    <div className="flex-shrink-0 flex items-center">
-                      <h1 className="text-xl font-bold text-gray-900">Handicap Check</h1>
+                    <div className="flex-shrink-0 flex items-center space-x-6">
+                      <Link href="/" className="text-xl font-bold text-gray-900 hover:text-indigo-600 transition-colors">Handicap Check</Link>
+                      <Link href="/tournament-check" className="text-gray-700 hover:text-indigo-600 font-medium transition-colors">Tournament Check</Link>
+                      <Link href="/score-check" className="text-gray-700 hover:text-indigo-600 font-medium transition-colors">Score Check</Link>
                     </div>
                   </div>
                   <div className="flex items-center">

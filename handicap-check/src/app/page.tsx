@@ -72,6 +72,24 @@ export default function Home() {
     }
   }
 
+  const handleDeleteRound = async (roundId: string) => {
+    if (!selectedGolfer) return;
+    try {
+      const response = await fetch(`/api/delete-round/${roundId}`, {
+        method: 'DELETE',
+      });
+      if (!response.ok) {
+        throw new Error('Failed to delete round');
+      }
+      // Refresh the rounds data
+      const updatedRounds = await fetchRounds(selectedGolfer.id);
+      setGolferRounds(updatedRounds);
+      setStatsRefreshKey(k => k + 1); // Force GolferStats to remount and re-fetch
+    } catch (error) {
+      console.error('Error deleting round:', error);
+    }
+  };
+
   if (status === 'loading') {
     return (
       <div className="flex items-center justify-center min-h-[50vh]">
@@ -112,7 +130,7 @@ export default function Home() {
           {selectedGolfer && (
             <>
               <GolferStats key={statsRefreshKey} golferId={selectedGolfer.id} golferName={selectedGolfer.name} />
-              <GolferRounds rounds={golferRounds} onUpdateRound={handleUpdateRound} />
+              <GolferRounds rounds={golferRounds} onUpdateRound={handleUpdateRound} onDeleteRound={handleDeleteRound} />
             </>
           )}
         </div>
