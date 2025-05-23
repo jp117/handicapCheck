@@ -6,11 +6,9 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-export async function DELETE(
-  request: Request,
-  context: { params: { id: string } }
-) {
-  const { id } = context.params;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function DELETE(request: any, { params }: any) {
+  const { id } = params;
   if (!id) {
     return NextResponse.json({ error: 'Missing round ID' }, { status: 400 });
   }

@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
 import Link from 'next/link'
+import type { Session } from 'next-auth';
 
 interface ApiResponse {
   error?: string;
@@ -23,7 +24,7 @@ function getToday() {
 }
 
 export default function AdminPage() {
-  const { data: session, status } = useSession();
+  const { data: session, status } = useSession() as { data: Session | null, status: string };
   const [result, setResult] = useState<ApiResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [date, setDate] = useState(getToday());
@@ -221,4 +222,4 @@ export default function AdminPage() {
       )}
     </div>
   );
-} 
+}

@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { useSession } from 'next-auth/react'
+import type { Session } from 'next-auth'
 import GolferSearch from '@/components/GolferSearch'
 import GolferStats from '@/components/GolferStats'
 import GolferRounds from '@/components/GolferRounds'
@@ -22,7 +23,7 @@ interface Round {
 }
 
 export default function Home() {
-  const { data: session, status } = useSession()
+  const { data: session, status } = useSession() as { data: Session | null, status: string }
   const [selectedGolfer, setSelectedGolfer] = useState<Golfer | null>(null)
   const [golferRounds, setGolferRounds] = useState<Round[]>([])
   const [statsRefreshKey, setStatsRefreshKey] = useState(0)
@@ -107,10 +108,10 @@ export default function Home() {
     )
   }
 
-  if (!session) {
+  if (!session || !session.user) {
     return (
       <div className="flex items-center justify-center min-h-[50vh]">
-        <p className="text-lg text-gray-900 font-medium">Please log in to see content</p>
+        <p className="text-lg text-gray-900 font-medium">Please sign in to continue.</p>
       </div>
     )
   }

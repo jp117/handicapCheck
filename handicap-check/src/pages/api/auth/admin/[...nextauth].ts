@@ -1,8 +1,7 @@
-import NextAuth from 'next-auth'
+import NextAuth from 'next-auth/next'
 import GoogleProvider from 'next-auth/providers/google'
 import { createClient } from '@supabase/supabase-js'
-import type { Session, User } from 'next-auth'
-import type { AdapterUser } from 'next-auth/adapters'
+import type { User } from 'next-auth'
 
 interface AppUser extends User {
   email?: string;
@@ -10,12 +9,6 @@ interface AppUser extends User {
   isApproved?: boolean;
   isAdmin?: boolean;
   hasGmailRefreshToken?: boolean;
-}
-
-interface AccountLike {
-  providerAccountId?: string;
-  refresh_token?: string;
-  [key: string]: unknown;
 }
 
 const supabase = createClient(
@@ -39,7 +32,9 @@ const authOptions = {
     })
   ],
   callbacks: {
-    async signIn({ user, account }: { user: AdapterUser | User; account: AccountLike | null }) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    async signIn(params: any) {
+      const { user, account } = params;
       const typedUser = user as AppUser
       if (!typedUser.email) return false
 
@@ -77,7 +72,9 @@ const authOptions = {
 
       return true;
     },
-    async session({ session }: { session: Session }) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    async session(params: any) {
+      const { session } = params;
       const userObj = session.user as AppUser
       if (userObj?.email) {
         const { data: userData } = await supabase
