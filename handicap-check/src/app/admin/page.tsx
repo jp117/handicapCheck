@@ -7,6 +7,28 @@ import type { Session } from 'next-auth';
 
 interface ApiResponse {
   error?: string;
+  timeout?: boolean;
+  message?: string;
+  success?: boolean;
+  step?: string;
+  steps?: {
+    mtech?: { success: boolean; teeTimes: number };
+    usga?: { success: boolean; posts: number };
+    process?: { success: boolean; inserted: number };
+  };
+  stats?: {
+    total: number;
+    inserted: number;
+    skipped: number;
+    excused: number;
+    unexcused: number;
+    unmatched: number;
+  };
+  unmatched?: string[];
+  partialData?: {
+    mtechTeeTimes: number;
+    usgaPosts: number;
+  };
   [key: string]: unknown;
 }
 
@@ -140,13 +162,55 @@ export default function AdminPage() {
 
   const loadOldData = async () => {
     setLoading(true);
+    setResult(null); // Clear previous results
     try {
-      const response = await fetch(`/api/load-old-data?date=${date}`);
+      // Create a timeout for the frontend request (30 seconds)
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000);
+
+      const response = await fetch(`/api/load-old-data?date=${date}`, {
+        signal: controller.signal
+      });
+      
+      clearTimeout(timeoutId);
+      
+      if (!response.ok) {
+        if (response.status === 408) {
+          // Handle timeout from the API
+          const data = await response.json();
+          setResult({ 
+            error: data.error,
+            timeout: true,
+            message: 'The operation timed out but may still be processing. Please check your data and try again if needed.'
+          });
+          return;
+        }
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      
       const data = await response.json();
       setResult(data);
     } catch (error) {
       console.error('Error loading old data:', error);
-      setResult({ error: 'Failed to load old data' });
+      
+      if (error instanceof Error) {
+        if (error.name === 'AbortError') {
+          setResult({ 
+            error: 'Request timed out after 30 seconds. The operation may still be running on the server.',
+            timeout: true,
+            message: 'Please wait a few minutes and check if your data was updated, or try again with a smaller date range.'
+          });
+        } else if (error.message.includes('Failed to fetch')) {
+          setResult({ 
+            error: 'Network error or server timeout',
+            message: 'Please check your connection and try again. The server may be processing a large amount of data.'
+          });
+        } else {
+          setResult({ error: error.message });
+        }
+      } else {
+        setResult({ error: 'An unexpected error occurred' });
+      }
     } finally {
       setLoading(false);
     }
@@ -182,7 +246,65 @@ export default function AdminPage() {
       </div>
       {result && (
         <div className="mt-6 p-4 bg-gray-100 rounded text-gray-900">
-          <pre className="whitespace-pre-wrap">{JSON.stringify(result, null, 2)}</pre>
+          {result.error ? (
+            <div className="mb-4">
+              <div className={`p-3 rounded ${result.timeout ? 'bg-yellow-100 border-yellow-400 text-yellow-800' : 'bg-red-100 border-red-400 text-red-800'} border`}>
+                <h3 className="font-semibold mb-2">
+                  {result.timeout ? '⏱️ Operation Timed Out' : '❌ Error'}
+                </h3>
+                <p className="mb-2">{String(result.error)}</p>
+                {result.message && (
+                  <p className="text-sm italic">{String(result.message)}</p>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="mb-4">
+              <div className="p-3 rounded bg-green-100 border-green-400 text-green-800 border">
+                <h3 className="font-semibold mb-2">✅ Success</h3>
+                {result.steps && (
+                  <div className="text-sm mb-3">
+                    <h4 className="font-medium mb-1">Process Steps:</h4>
+                    {result.steps.mtech && (
+                      <p>📊 MTech Data: {result.steps.mtech.teeTimes} tee times fetched</p>
+                    )}
+                    {result.steps.usga && (
+                      <p>📧 USGA Posts: {result.steps.usga.posts} posted scores found</p>
+                    )}
+                    {result.steps.process && (
+                      <p>💾 Database: {result.steps.process.inserted} records inserted</p>
+                    )}
+                  </div>
+                )}
+                {result.stats && (
+                  <div className="text-sm">
+                    <h4 className="font-medium mb-1">Final Statistics:</h4>
+                    <p>Total tee times: {result.stats.total}</p>
+                    <p>Inserted: {result.stats.inserted}</p>
+                    <p>Skipped: {result.stats.skipped}</p>
+                    <p>Excused: {result.stats.excused}</p>
+                    <p>Unexcused: {result.stats.unexcused}</p>
+                    <p>Unmatched: {result.stats.unmatched}</p>
+                  </div>
+                )}
+                {result.partialData && (
+                  <div className="text-sm mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded">
+                    <h4 className="font-medium">Partial Data Available:</h4>
+                    <p>MTech tee times: {result.partialData.mtechTeeTimes}</p>
+                    <p>USGA posts: {result.partialData.usgaPosts}</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+          <details className="mt-4">
+            <summary className="cursor-pointer text-sm text-gray-600 hover:text-gray-800">
+              Show Raw Response
+            </summary>
+            <pre className="mt-2 text-xs bg-gray-50 p-2 rounded overflow-x-auto whitespace-pre-wrap">
+              {JSON.stringify(result, null, 2)}
+            </pre>
+          </details>
         </div>
       )}
       <h2 className="text-xl font-bold mt-10 mb-2">Excluded Dates/Times</h2>
