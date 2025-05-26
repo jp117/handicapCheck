@@ -148,13 +148,16 @@ export async function GET() {
     }
     
     const today = new Date()
-    const dateStr = today.toLocaleDateString('en-US', {
+    const yesterday = new Date(today)
+    yesterday.setDate(yesterday.getDate() - 1)
+    
+    const dateStr = yesterday.toLocaleDateString('en-US', {
       month: '2-digit',
       day: '2-digit',
       year: '2-digit'
     }).replace(/\//g, '-')
     
-    console.log('📅 Processing date:', dateStr)
+    console.log('📅 Processing date:', dateStr, '(yesterday)')
     
     // Step 1: Get MTech data and process tee times
     console.log('📊 Fetching MTech data...')
@@ -164,7 +167,7 @@ export async function GET() {
     const { data: exclusions, error: exError } = await supabase
       .from('excluded_dates')
       .select('*')
-      .eq('date', today.toISOString().slice(0, 10))
+      .eq('date', yesterday.toISOString().slice(0, 10))
     if (exError) throw new Error('Failed to fetch exclusions')
 
     // Filter out tee times that are excluded
@@ -181,7 +184,7 @@ export async function GET() {
     let postedGHINs: string[] = []
     try {
       const gmail = await getGmailClient()
-      postedGHINs = await getUSGAPosts(today, gmail)
+      postedGHINs = await getUSGAPosts(yesterday, gmail)
       console.log('✅ USGA data fetched:', postedGHINs.length, 'posted GHINs')
     } catch (error) {
       console.warn('⚠️ USGA fetch error, continuing without posted GHINs:', error)
@@ -190,26 +193,32 @@ export async function GET() {
     // Step 3: Process database operations and send email
     console.log('💾 Processing database and sending email...')
     
-    // Query database for non-posters
-    const { data: menNoPost, error: menError } = await supabase
+    // Query database for all pending tee times for this date
+    console.log('🔍 Querying for all pending tee times on', dateStr)
+    
+    const { data: allPendingTimes, error: queryError } = await supabase
       .from('tee_times')
       .select('*')
       .eq('date', dateStr)
       .eq('status', 'pending')
-      .not('ghin_number', 'in', postedGHINs.length > 0 ? postedGHINs : [''])
-      .eq('gender', 'M')
 
-    const { data: womenNoPost, error: womenError } = await supabase
-      .from('tee_times')
-      .select('*')
-      .eq('date', dateStr)
-      .eq('status', 'pending')
-      .not('ghin_number', 'in', postedGHINs.length > 0 ? postedGHINs : [''])
-      .eq('gender', 'F')
-
-    if (menError || womenError) {
-      throw new Error('Failed to fetch no-post data')
+    if (queryError) {
+      console.error('❌ Database query error:', queryError)
+      throw new Error(`Failed to fetch tee times: ${queryError.message}`)
     }
+
+    console.log('✅ Found', allPendingTimes?.length || 0, 'pending tee times')
+
+    // Filter out posted GHINs in JavaScript
+    const nonPosters = (allPendingTimes || []).filter(time => 
+      !postedGHINs.includes(time.ghin_number)
+    )
+
+    // Separate by gender
+    const menNoPost = nonPosters.filter(time => time.gender === 'M')
+    const womenNoPost = nonPosters.filter(time => time.gender === 'F')
+
+    console.log('✅ Non-posters identified:', menNoPost.length, 'men,', womenNoPost.length, 'women')
 
     // Send email with results
     await sendNoPostEmail(
