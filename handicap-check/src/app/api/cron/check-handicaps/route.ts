@@ -5,12 +5,14 @@ import nodemailer from 'nodemailer'
 import { isTeeTimeExcluded } from '@/lib/exclusions'
 import * as XLSX from 'xlsx'
 import { gmail_v1 } from 'googleapis'
+import { parse as csvParse } from 'csv-parse/sync'
 
 interface NoPostPlayer {
   name: string;
   member_number: string;
   ghin_number: string;
   gender: string;
+  email: string;
   [key: string]: unknown;
 }
 
@@ -34,40 +36,58 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
-async function getMTechData(date: string) {
+// Helper to normalize dates to YYYY-MM-DD
+function normalizeDate(str: string): string {
+  const [month, day, year] = str.split(/[\/-]/).map(s => s.trim());
+  if (!year || !month || !day) return '';
+  return `${year.padStart(4, '20')}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+}
+
+async function getMTechData(dateStr: string, normalizedDate: string) {
   const apiKey = process.env.MTECH_API_KEY
   const response = await fetch(
-    `https://www.clubmtech.com/cmtapi/teetimes/?apikey=${apiKey}&TheDate=${date}`
+    `https://www.clubmtech.com/cmtapi/teetimes/?apikey=${apiKey}&TheDate=${dateStr}`
   )
   const data = await response.text()
+  const teeTimesRaw = data.split('\n').slice(1) // Skip header row
   
-  // Parse CSV data into structured records
-  const lines = data.split('\n').slice(1).filter(line => line.trim()) // Remove header and empty lines
-  const teeTimeRecords: TeeTimeRecord[] = []
-  const teeTimeGroups: Record<string, TeeTimeRecord[]> = {}
-  
-  for (const line of lines) {
-    const columns = line.split(',')
-    if (columns.length >= 3 && columns[0] && columns[1] && columns[2]) {
-      const record: TeeTimeRecord = {
-        member_number: columns[0].trim(),
-        time: columns[1].trim(),
-        date: date, // Use the input date
-        name: columns[2].trim()
-      }
-      
-      teeTimeRecords.push(record)
-      
-      // Group by date-time for solo player detection
-      const key = `${record.date}-${record.time}`
-      if (!teeTimeGroups[key]) {
-        teeTimeGroups[key] = []
-      }
-      teeTimeGroups[key].push(record)
+  // Parse CSV data using the same logic as load-old-data
+  const records = csvParse(teeTimesRaw.join('\n'), {
+    columns: false,
+    skip_empty_lines: true,
+    trim: true
+  });
+
+  // Fetch exclusions for this date
+  const { data: exclusions, error: exError } = await supabase
+    .from('excluded_dates')
+    .select('*')
+    .eq('date', normalizedDate)
+  if (exError) throw new Error('Failed to fetch exclusions')
+
+  // Parse and filter tee times using the same logic as load-old-data
+  const teeTimes = (records as string[][])
+    .filter((cols: string[]) => cols.length >= 5 && (cols[4]?.trim() || cols[5]?.trim()))
+    .filter((cols: string[]) => normalizeDate(cols[0].trim()) === normalizedDate)
+    .filter((cols: string[]) => !isTeeTimeExcluded(cols[1], exclusions))
+    .map((cols: string[]) => ({
+      member_number: (cols[5]?.trim() || cols[4]?.trim()).replace(/\r/g, ''),
+      time: cols[1].trim(),
+      date: cols[0].trim(),
+      name: cols[2]?.trim()
+    }));
+
+  // Group tee times by date and time to identify solo rounds
+  const teeTimeGroups = teeTimes.reduce((groups, teeTime) => {
+    const key = `${teeTime.date}-${teeTime.time}`;
+    if (!groups[key]) {
+      groups[key] = [];
     }
-  }
-  
-  return { teeTimeRecords, teeTimeGroups }
+    groups[key].push(teeTime);
+    return groups;
+  }, {} as Record<string, TeeTimeRecord[]>);
+
+  return { teeTimeRecords: teeTimes, teeTimeGroups }
 }
 
 async function getGmailClient() {
@@ -185,10 +205,15 @@ async function processAndInsertTeeTimeData(
   
   if (golfersError) throw golfersError
 
-  // Create a lookup map
+  // Create a lookup map - only include golfers WITH GHIN numbers
   const golferMap = new Map()
   golfers?.forEach(g => {
-    golferMap.set(g.member_number.toLowerCase(), g)
+    // Only add golfers who have GHIN numbers to the map
+    if (g.ghin_number && g.ghin_number.toString().trim() !== '') {
+      golferMap.set(g.member_number.toLowerCase(), g)
+    } else {
+      console.log(`Skipping golfer ${g.member_number} - no GHIN number in database`)
+    }
   })
 
   // Fetch existing tee times for this date
@@ -304,14 +329,63 @@ async function sendNoPostEmail(menNoPost: NoPostPlayer[], womenNoPost: NoPostPla
     }
   })
 
-  const menReport = menNoPost.map(p => `${p.name} (${p.member_number})`).join('\n')
-  const womenReport = womenNoPost.map(p => `${p.name} (${p.member_number})`).join('\n')
+  // Use the original date format (MM-DD-YY) for Excel NO_POST_DATE column
+  const excelDate = date // date is already in MM-DD-YY format
+
+  // Create Excel workbooks for men and women
+  const createExcelAttachment = (players: NoPostPlayer[], sheetName: string) => {
+    const workbook = XLSX.utils.book_new()
+    
+    // Create data with proper columns
+    const data = [
+      ['Last Name', 'MemberNo', 'Email', 'NO_POST_DATE'], // Header row - changed "Name" to "Last Name"
+      ...players.map(player => [
+        player.name, // Name (first + middle + last + suffix)
+        player.member_number, // MemberNo
+        player.email || '', // Email
+        excelDate // NO_POST_DATE (yesterday's date in MM-DD-YY format)
+      ])
+    ]
+    
+    const worksheet = XLSX.utils.aoa_to_sheet(data)
+    XLSX.utils.book_append_sheet(workbook, worksheet, sheetName)
+    
+    return XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' })
+  }
+
+  const attachments = []
+  
+  if (menNoPost.length > 0) {
+    const menExcel = createExcelAttachment(menNoPost, 'Men Non-Posters')
+    attachments.push({
+      filename: `Men_NonPosters_${date}.xlsx`,
+      content: menExcel,
+      contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    })
+  }
+  
+  if (womenNoPost.length > 0) {
+    const womenExcel = createExcelAttachment(womenNoPost, 'Women Non-Posters')
+    attachments.push({
+      filename: `Women_NonPosters_${date}.xlsx`,
+      content: womenExcel,
+      contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    })
+  }
+
+  const emailText = `Non-Posters Report for ${date}
+
+Men who did not post: ${menNoPost.length}
+Women who did not post: ${womenNoPost.length}
+
+Please see attached Excel files for detailed lists.`
 
   await transporter.sendMail({
     from: process.env.EMAIL_USER,
     to: 'john.paradise117@gmail.com',
-    subject: `Non-Posters for ${date}`,
-    text: `Men who did not post:\n${menReport}\n\nWomen who did not post:\n${womenReport}`
+    subject: `Non-Posters Report for ${date}`,
+    text: emailText,
+    attachments: attachments
   })
 }
 
@@ -356,21 +430,9 @@ export async function GET() {
     
     // Step 1: Get MTech data and process tee times
     console.log('📊 Fetching MTech data...')
-    const { teeTimeRecords, teeTimeGroups } = await getMTechData(dateStr)
+    const { teeTimeRecords, teeTimeGroups } = await getMTechData(dateStr, normalizedDate)
 
-    // Fetch exclusions for this date
-    const { data: exclusions, error: exError } = await supabase
-      .from('excluded_dates')
-      .select('*')
-      .eq('date', normalizedDate)
-    if (exError) throw new Error('Failed to fetch exclusions')
-
-    // Filter out tee times that are excluded
-    const filteredTeeTimeRecords = teeTimeRecords.filter(record => {
-      return !isTeeTimeExcluded(record.time, exclusions)
-    })
-    
-    console.log('✅ MTech data processed:', filteredTeeTimeRecords.length, 'tee times after exclusion filtering')
+    console.log('✅ MTech data processed:', teeTimeRecords.length, 'tee times after exclusion filtering')
     
     // Step 2: Get USGA posts from Gmail
     console.log('📧 Fetching USGA posts...')
@@ -386,7 +448,7 @@ export async function GET() {
     // Step 3: Process and insert tee time data into database
     console.log('💾 Processing and inserting tee time data...')
     const processResult = await processAndInsertTeeTimeData(
-      filteredTeeTimeRecords,
+      teeTimeRecords,
       teeTimeGroups,
       postedGHINs,
       normalizedDate
@@ -397,22 +459,10 @@ export async function GET() {
     // Step 4: Query database for non-posters (after the data has been inserted/updated)
     console.log('📋 Querying for final non-posters...')
     
-    const { data: finalNonPosters, error: queryError } = await supabase
+    // First, get all unexcused non-posters for the date
+    const { data: teeTimesData, error: queryError } = await supabase
       .from('tee_times')
-      .select(`
-        id,
-        date,
-        tee_time,
-        posting_status,
-        excuse_reason,
-        golfers!inner(
-          id,
-          name,
-          member_number,
-          ghin_number,
-          gender
-        )
-      `)
+      .select('id, date, tee_time, posting_status, excuse_reason, golfer_id')
       .eq('date', normalizedDate)
       .eq('posting_status', 'unexcused_no_post')
 
@@ -421,30 +471,78 @@ export async function GET() {
       throw new Error(`Failed to fetch non-posters: ${queryError.message}`)
     }
 
-    console.log('✅ Found', finalNonPosters?.length || 0, 'final non-posters')
+    console.log('✅ Found', teeTimesData?.length || 0, 'final non-posters')
+
+    if (!teeTimesData || teeTimesData.length === 0) {
+      console.log('✅ No non-posters found, skipping email')
+      
+      return NextResponse.json({ 
+        success: true,
+        steps: {
+          mtech: { success: true, teeTimes: teeTimeRecords.length },
+          usga: { success: postedGHINs.length >= 0, postedCount: postedGHINs.length },
+          process: { success: true, stats: processResult.stats },
+          report: { success: true, menNoPost: 0, womenNoPost: 0, emailSent: false }
+        },
+        date: dateStr,
+        timestamp: new Date().toISOString()
+      })
+    }
+
+    // Get unique golfer IDs from the tee times
+    const golferIds = [...new Set(teeTimesData.map(t => t.golfer_id))]
+    
+    // Fetch golfer details for these IDs
+    const { data: golfersData, error: golfersError } = await supabase
+      .from('golfers')
+      .select('id, first_name, middle_name, last_name, suffix, member_number, ghin_number, gender, email')
+      .in('id', golferIds)
+
+    if (golfersError) {
+      console.error('❌ Golfers query error:', golfersError)
+      throw new Error(`Failed to fetch golfer details: ${golfersError.message}`)
+    }
+
+    // Create a golfer lookup map
+    const golferMap = new Map()
+    golfersData?.forEach(golfer => {
+      golferMap.set(golfer.id, golfer)
+    })
 
     // Transform the data to match NoPostPlayer interface
-    const nonPostPlayers: NoPostPlayer[] = (finalNonPosters || []).map((teeTime) => {
-      const golfer = (teeTime as unknown as { 
-        golfers: { 
-          name: string; 
-          member_number: string; 
-          ghin_number: string | null; 
-          gender: string; 
-        }[];
-        tee_time: string;
-        date: string;
-      }).golfers[0]
+    const nonPostPlayers: NoPostPlayer[] = teeTimesData.map((teeTime) => {
+      const golfer = golferMap.get(teeTime.golfer_id)
+      
+      if (!golfer) {
+        console.warn(`Golfer not found for ID: ${teeTime.golfer_id}`)
+        return null
+      }
+      
+      // Skip golfers without GHIN numbers - they can't post scores
+      if (!golfer.ghin_number || golfer.ghin_number.toString().trim() === '') {
+        console.log(`Skipping golfer ${golfer.first_name} ${golfer.last_name} - no GHIN number`)
+        return null
+      }
+      
+      // Construct full name from first_name, middle_name, last_name, and suffix
+      const nameParts = [
+        golfer.first_name,
+        golfer.middle_name,
+        golfer.last_name
+      ].filter(Boolean) // Remove any null/undefined/empty parts
+      
+      const fullName = nameParts.join(' ') + (golfer.suffix ? ` ${golfer.suffix}` : '')
       
       return {
-        name: golfer.name,
+        name: fullName.trim(),
         member_number: golfer.member_number,
         ghin_number: golfer.ghin_number || '',
         gender: golfer.gender || '',
-        tee_time: (teeTime as unknown as { tee_time: string }).tee_time,
-        date: (teeTime as unknown as { date: string }).date
+        email: golfer.email || '',
+        tee_time: teeTime.tee_time,
+        date: teeTime.date
       }
-    })
+    }).filter(Boolean) as NoPostPlayer[] // Remove any null entries
 
     // Separate by gender
     const menNoPost = nonPostPlayers.filter(player => player.gender === 'M')
@@ -459,7 +557,7 @@ export async function GET() {
     return NextResponse.json({ 
       success: true,
       steps: {
-        mtech: { success: true, teeTimes: filteredTeeTimeRecords.length },
+        mtech: { success: true, teeTimes: teeTimeRecords.length },
         usga: { success: postedGHINs.length >= 0, postedCount: postedGHINs.length },
         process: { success: true, stats: processResult.stats },
         report: { success: true, menNoPost: menNoPost.length, womenNoPost: womenNoPost.length, emailSent: true }
