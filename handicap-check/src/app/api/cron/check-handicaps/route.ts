@@ -3,20 +3,30 @@ import { createClient } from '@supabase/supabase-js'
 import { google } from 'googleapis'
 import nodemailer from 'nodemailer'
 import { isTeeTimeExcluded } from '@/lib/exclusions'
-
-interface TeeTimeRow {
-  [key: string]: string;
-}
-
-interface SoloPlayer extends TeeTimeRow {
-  status: 'excused';
-  excuseReason: 'solo';
-}
+import * as XLSX from 'xlsx'
+import { gmail_v1 } from 'googleapis'
 
 interface NoPostPlayer {
   name: string;
-  memberNumber: string;
+  member_number: string;
+  ghin_number: string;
+  gender: string;
   [key: string]: unknown;
+}
+
+interface TeeTimeRecord {
+  member_number: string;
+  time: string;
+  date: string;
+  name: string;
+}
+
+interface TeeTimeInsert {
+  date: string;
+  golfer_id: string;
+  tee_time: string;
+  posting_status: 'posted' | 'excused_no_post' | 'unexcused_no_post';
+  excuse_reason: string | null;
 }
 
 const supabase = createClient(
@@ -30,42 +40,34 @@ async function getMTechData(date: string) {
     `https://www.clubmtech.com/cmtapi/teetimes/?apikey=${apiKey}&TheDate=${date}`
   )
   const data = await response.text()
-  return data.split('\n').slice(1).map(row => {
-    const columns = row.split(',');
-    return {
-      0: columns[0] || '',
-      1: columns[1] || '',
-      2: columns[2] || '',
-      // Add more columns as needed
-    } as TeeTimeRow;
-  });
-}
-
-function checkSoloPlayers(teeTimes: TeeTimeRow[]) {
-  const timeGroups = new Map<string, TeeTimeRow[]>()
   
-  // Group players by tee time
-  teeTimes.forEach(time => {
-    const timeStr = time[1] // Assuming time is in second column
-    if (!timeGroups.has(timeStr)) {
-      timeGroups.set(timeStr, [])
-    }
-    timeGroups.get(timeStr)?.push(time)
-  })
-
-  // Mark solo players as excused
-  const soloPlayers: SoloPlayer[] = []
-  for (const players of timeGroups.values()) {
-    if (players.length === 1) {
-      soloPlayers.push({
-        ...players[0],
-        status: 'excused',
-        excuseReason: 'solo'
-      })
+  // Parse CSV data into structured records
+  const lines = data.split('\n').slice(1).filter(line => line.trim()) // Remove header and empty lines
+  const teeTimeRecords: TeeTimeRecord[] = []
+  const teeTimeGroups: Record<string, TeeTimeRecord[]> = {}
+  
+  for (const line of lines) {
+    const columns = line.split(',')
+    if (columns.length >= 3 && columns[0] && columns[1] && columns[2]) {
+      const record: TeeTimeRecord = {
+        member_number: columns[0].trim(),
+        time: columns[1].trim(),
+        date: date, // Use the input date
+        name: columns[2].trim()
+      }
+      
+      teeTimeRecords.push(record)
+      
+      // Group by date-time for solo player detection
+      const key = `${record.date}-${record.time}`
+      if (!teeTimeGroups[key]) {
+        teeTimeGroups[key] = []
+      }
+      teeTimeGroups[key].push(record)
     }
   }
-
-  return soloPlayers
+  
+  return { teeTimeRecords, teeTimeGroups }
 }
 
 async function getGmailClient() {
@@ -87,20 +89,210 @@ async function getGmailClient() {
 }
 
 async function getUSGAPosts(date: Date, gmail: ReturnType<typeof google.gmail>) {
+  // Find the email for the day after the given date
   const nextDay = new Date(date)
   nextDay.setDate(nextDay.getDate() + 1)
-  const searchQuery = `from:reporting@ghin.com subject:"Auto-Generated Scheduled Report - Played / Posted Report (Player Rounds)" after:${nextDay.toISOString().split('T')[0]} before:${new Date(nextDay.getTime() + 86400000).toISOString().split('T')[0]}`
+  const after = nextDay.toISOString().split('T')[0]
+  const before = new Date(nextDay.getTime() + 86400000).toISOString().split('T')[0]
+  const searchQuery = `from:reporting@ghin.com subject:"Auto-Generated Scheduled Report - Played / Posted Report (Player Rounds)" after:${after} before:${before}`
+  
+  console.log(`Searching Gmail for USGA reports: ${searchQuery}`)
   
   const response = await gmail.users.messages.list({
     userId: 'me',
     q: searchQuery
   })
   
-  if (!response.data.messages?.length) return []
+  if (!response.data.messages?.length) {
+    console.log('No USGA email found for date')
+    return []
+  }
   
-  // TODO: Parse the XLSX attachment and return posted GHIN numbers
-  // For now, return empty array until XLSX parsing is implemented
-  return []
+  const message = await gmail.users.messages.get({
+    userId: 'me',
+    id: response.data.messages[0].id!
+  })
+
+  // Find the XLSX attachment
+  const parts = message.data.payload?.parts || []
+  const xlsxFilenames = parts
+    .filter((part): part is gmail_v1.Schema$MessagePart & { filename: string } => 
+      Boolean(part.filename?.endsWith('.xlsx')))
+    .map(part => part.filename)
+  
+  const xlsxPart = parts.find(
+    (part): part is gmail_v1.Schema$MessagePart & { filename: string; body: { attachmentId: string } } => 
+      Boolean(part.filename?.endsWith('.xlsx') && 
+              part.filename.toLowerCase().includes('played') && 
+              part.body?.attachmentId)
+  )
+  
+  if (!xlsxPart) {
+    console.error('No XLSX attachment found in USGA email. XLSX filenames found:', xlsxFilenames)
+    return []
+  }
+
+  console.log(`Found XLSX attachment: ${xlsxPart.filename}`)
+
+  // Download the attachment
+  const attachmentData = await gmail.users.messages.attachments.get({
+    userId: 'me',
+    messageId: message.data.id!,
+    id: xlsxPart.body.attachmentId
+  })
+  const buffer = Buffer.from(attachmentData.data.data!, 'base64')
+
+  // Parse the XLSX file
+  const workbook = XLSX.read(buffer, { type: 'buffer' })
+  const sheet = workbook.Sheets[workbook.SheetNames[0]]
+  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 })
+
+  // Find the header row and column indices
+  const header = rows[0] as string[]
+  const ghinIdx = header.findIndex(h => String(h).toLowerCase().includes('ghin'))
+  const postedIdx = header.findIndex(h => String(h).toLowerCase().includes('total posted on date played'))
+  
+  if (ghinIdx === -1 || postedIdx === -1) {
+    console.error('Could not find GHIN or posted columns in XLSX')
+    return []
+  }
+
+  // Collect GHIN numbers where posted > 0
+  const postedGHINs = (rows.slice(1) as (string | number)[][])
+    .filter(row => row[ghinIdx] && Number(row[postedIdx]) > 0)
+    .map(row => String(row[ghinIdx]).trim())
+
+  console.log(`Found ${postedGHINs.length} posted GHIN numbers`)
+  return postedGHINs
+}
+
+async function processAndInsertTeeTimeData(
+  teeTimeRecords: TeeTimeRecord[], 
+  teeTimeGroups: Record<string, TeeTimeRecord[]>,
+  postedGHINs: string[], 
+  normalizedDate: string
+) {
+  console.log(`Processing ${teeTimeRecords.length} tee times for ${normalizedDate}...`)
+
+  // Batch fetch all golfers to reduce DB calls
+  const memberNumbers = [...new Set(teeTimeRecords.map(t => t.member_number.trim()))]
+  console.log(`Batch fetching ${memberNumbers.length} unique golfers...`)
+  
+  const { data: golfers, error: golfersError } = await supabase
+    .from('golfers')
+    .select('id, member_number, ghin_number')
+    .in('member_number', memberNumbers)
+  
+  if (golfersError) throw golfersError
+
+  // Create a lookup map
+  const golferMap = new Map()
+  golfers?.forEach(g => {
+    golferMap.set(g.member_number.toLowerCase(), g)
+  })
+
+  // Fetch existing tee times for this date
+  console.log('Fetching existing tee times...')
+  const { data: existingTeeTimes, error: fetchExistingError } = await supabase
+    .from('tee_times')
+    .select('id, date, golfer_id, tee_time, posting_status')
+    .eq('date', normalizedDate)
+  if (fetchExistingError) throw fetchExistingError
+
+  const unmatchedMemberNumbers: string[] = []
+  const teeTimeInserts: TeeTimeInsert[] = []
+
+  // Process tee times
+  console.log('Processing tee times for database insertion...')
+  for (const teeTime of teeTimeRecords) {
+    const golfer = golferMap.get(teeTime.member_number.trim().toLowerCase())
+    if (!golfer) {
+      unmatchedMemberNumbers.push(teeTime.member_number)
+      continue
+    }
+
+    const golferId = golfer.id
+    const rosterGhin = golfer.ghin_number ? String(golfer.ghin_number).trim() : ''
+
+    // Check if this is a solo round
+    const key = `${teeTime.date}-${teeTime.time}`
+    const isSoloRound = teeTimeGroups[key]?.length === 1
+
+    // Check if a tee_time already exists for this date, golfer, and tee_time
+    const existing = existingTeeTimes?.find(
+      t => t.golfer_id === golferId && t.tee_time === teeTime.time
+    )
+    if (existing && existing.posting_status === 'posted') {
+      continue
+    }
+
+    // Determine posting status
+    let posting_status: 'posted' | 'excused_no_post' | 'unexcused_no_post'
+    let excuse_reason: string | null = null
+    if (rosterGhin && postedGHINs.includes(rosterGhin)) {
+      posting_status = 'posted'
+    } else if (isSoloRound) {
+      posting_status = 'excused_no_post'
+      excuse_reason = 'solo'
+    } else {
+      posting_status = 'unexcused_no_post'
+    }
+
+    teeTimeInserts.push({
+      date: normalizedDate,
+      golfer_id: golferId,
+      tee_time: teeTime.time,
+      posting_status,
+      excuse_reason
+    })
+  }
+
+  // Batch insert with error handling
+  console.log(`Inserting ${teeTimeInserts.length} tee times...`)
+  let insertedCount = 0
+  let skippedCount = 0
+  let excusedInserted = 0
+  let unexcusedInserted = 0
+
+  // Process in chunks to avoid overwhelming the database
+  const chunkSize = 50
+  for (let i = 0; i < teeTimeInserts.length; i += chunkSize) {
+    const chunk = teeTimeInserts.slice(i, i + chunkSize)
+    for (const insert of chunk) {
+      const { error } = await supabase
+        .from('tee_times')
+        .upsert(insert, {
+          onConflict: 'date,golfer_id,tee_time',
+          ignoreDuplicates: false
+        })
+
+      if (error) {
+        console.error('Error inserting tee time:', error)
+        skippedCount++
+      } else {
+        insertedCount++
+        if (insert.posting_status === 'excused_no_post') {
+          excusedInserted++
+        } else if (insert.posting_status === 'unexcused_no_post') {
+          unexcusedInserted++
+        }
+      }
+    }
+  }
+
+  console.log(`Completed: ${insertedCount} inserted, ${skippedCount} skipped`)
+
+  return {
+    stats: {
+      total: teeTimeRecords.length,
+      inserted: insertedCount,
+      skipped: skippedCount,
+      excused: excusedInserted,
+      unexcused: unexcusedInserted,
+      unmatched: unmatchedMemberNumbers.length
+    },
+    unmatched: unmatchedMemberNumbers
+  }
 }
 
 async function sendNoPostEmail(menNoPost: NoPostPlayer[], womenNoPost: NoPostPlayer[], date: string) {
@@ -112,8 +304,8 @@ async function sendNoPostEmail(menNoPost: NoPostPlayer[], womenNoPost: NoPostPla
     }
   })
 
-  const menReport = menNoPost.map(p => `${p.name} (${p.memberNumber})`).join('\n')
-  const womenReport = womenNoPost.map(p => `${p.name} (${p.memberNumber})`).join('\n')
+  const menReport = menNoPost.map(p => `${p.name} (${p.member_number})`).join('\n')
+  const womenReport = womenNoPost.map(p => `${p.name} (${p.member_number})`).join('\n')
 
   await transporter.sendMail({
     from: process.env.EMAIL_USER,
@@ -157,27 +349,28 @@ export async function GET() {
       year: '2-digit'
     }).replace(/\//g, '-')
     
-    console.log('📅 Processing date:', dateStr, '(yesterday)')
+    // Convert to normalized date format (YYYY-MM-DD) for database query
+    const normalizedDate = yesterday.toISOString().slice(0, 10)
+    
+    console.log('📅 Processing date:', dateStr, '(yesterday), normalized:', normalizedDate)
     
     // Step 1: Get MTech data and process tee times
     console.log('📊 Fetching MTech data...')
-    let teeTimes = await getMTechData(dateStr)
+    const { teeTimeRecords, teeTimeGroups } = await getMTechData(dateStr)
 
     // Fetch exclusions for this date
     const { data: exclusions, error: exError } = await supabase
       .from('excluded_dates')
       .select('*')
-      .eq('date', yesterday.toISOString().slice(0, 10))
+      .eq('date', normalizedDate)
     if (exError) throw new Error('Failed to fetch exclusions')
 
     // Filter out tee times that are excluded
-    teeTimes = teeTimes.filter(row => {
-      return !isTeeTimeExcluded(row[1], exclusions)
+    const filteredTeeTimeRecords = teeTimeRecords.filter(record => {
+      return !isTeeTimeExcluded(record.time, exclusions)
     })
     
-    // Check for solo players
-    const soloPlayers = checkSoloPlayers(teeTimes)
-    console.log('✅ MTech data processed:', teeTimes.length, 'tee times,', soloPlayers.length, 'solo players')
+    console.log('✅ MTech data processed:', filteredTeeTimeRecords.length, 'tee times after exclusion filtering')
     
     // Step 2: Get USGA posts from Gmail
     console.log('📧 Fetching USGA posts...')
@@ -190,50 +383,86 @@ export async function GET() {
       console.warn('⚠️ USGA fetch error, continuing without posted GHINs:', error)
     }
     
-    // Step 3: Process database operations and send email
-    console.log('💾 Processing database and sending email...')
+    // Step 3: Process and insert tee time data into database
+    console.log('💾 Processing and inserting tee time data...')
+    const processResult = await processAndInsertTeeTimeData(
+      filteredTeeTimeRecords,
+      teeTimeGroups,
+      postedGHINs,
+      normalizedDate
+    )
     
-    // Query database for all pending tee times for this date
-    console.log('🔍 Querying for all pending tee times on', dateStr)
+    console.log('✅ Database processing completed:', processResult.stats)
     
-    const { data: allPendingTimes, error: queryError } = await supabase
+    // Step 4: Query database for non-posters (after the data has been inserted/updated)
+    console.log('📋 Querying for final non-posters...')
+    
+    const { data: finalNonPosters, error: queryError } = await supabase
       .from('tee_times')
-      .select('*')
-      .eq('date', dateStr)
-      .eq('status', 'pending')
+      .select(`
+        id,
+        date,
+        tee_time,
+        posting_status,
+        excuse_reason,
+        golfers!inner(
+          id,
+          name,
+          member_number,
+          ghin_number,
+          gender
+        )
+      `)
+      .eq('date', normalizedDate)
+      .eq('posting_status', 'unexcused_no_post')
 
     if (queryError) {
       console.error('❌ Database query error:', queryError)
-      throw new Error(`Failed to fetch tee times: ${queryError.message}`)
+      throw new Error(`Failed to fetch non-posters: ${queryError.message}`)
     }
 
-    console.log('✅ Found', allPendingTimes?.length || 0, 'pending tee times')
+    console.log('✅ Found', finalNonPosters?.length || 0, 'final non-posters')
 
-    // Filter out posted GHINs in JavaScript
-    const nonPosters = (allPendingTimes || []).filter(time => 
-      !postedGHINs.includes(time.ghin_number)
-    )
+    // Transform the data to match NoPostPlayer interface
+    const nonPostPlayers: NoPostPlayer[] = (finalNonPosters || []).map((teeTime) => {
+      const golfer = (teeTime as unknown as { 
+        golfers: { 
+          name: string; 
+          member_number: string; 
+          ghin_number: string | null; 
+          gender: string; 
+        }[];
+        tee_time: string;
+        date: string;
+      }).golfers[0]
+      
+      return {
+        name: golfer.name,
+        member_number: golfer.member_number,
+        ghin_number: golfer.ghin_number || '',
+        gender: golfer.gender || '',
+        tee_time: (teeTime as unknown as { tee_time: string }).tee_time,
+        date: (teeTime as unknown as { date: string }).date
+      }
+    })
 
     // Separate by gender
-    const menNoPost = nonPosters.filter(time => time.gender === 'M')
-    const womenNoPost = nonPosters.filter(time => time.gender === 'F')
+    const menNoPost = nonPostPlayers.filter(player => player.gender === 'M')
+    const womenNoPost = nonPostPlayers.filter(player => player.gender === 'F')
 
-    console.log('✅ Non-posters identified:', menNoPost.length, 'men,', womenNoPost.length, 'women')
+    console.log('✅ Final non-posters by gender:', menNoPost.length, 'men,', womenNoPost.length, 'women')
 
-    // Send email with results
-    await sendNoPostEmail(
-      menNoPost as NoPostPlayer[], 
-      womenNoPost as NoPostPlayer[], 
-      dateStr
-    )
+    // Step 5: Send email with results
+    await sendNoPostEmail(menNoPost, womenNoPost, dateStr)
 
     console.log('🎉 Handicap check cron job completed successfully!')
     return NextResponse.json({ 
       success: true,
       steps: {
-        mtech: { success: true, teeTimes: teeTimes.length, soloPlayers: soloPlayers.length },
+        mtech: { success: true, teeTimes: filteredTeeTimeRecords.length },
         usga: { success: postedGHINs.length >= 0, postedCount: postedGHINs.length },
-        process: { success: true, menNoPost: menNoPost?.length || 0, womenNoPost: womenNoPost?.length || 0, emailSent: true }
+        process: { success: true, stats: processResult.stats },
+        report: { success: true, menNoPost: menNoPost.length, womenNoPost: womenNoPost.length, emailSent: true }
       },
       date: dateStr,
       timestamp: new Date().toISOString()
