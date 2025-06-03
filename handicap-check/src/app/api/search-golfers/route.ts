@@ -15,11 +15,11 @@ interface TransformedGolfer {
 
 // Log the environment variables (without the actual values)
 console.log('Supabase URL exists:', !!process.env.NEXT_PUBLIC_SUPABASE_URL)
-console.log('Supabase Anon Key exists:', !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)
+console.log('Service role key exists:', !!process.env.SUPABASE_SERVICE_ROLE_KEY)
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
 export async function GET(request: Request) {
