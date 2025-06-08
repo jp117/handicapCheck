@@ -4,6 +4,7 @@ import { NextResponse } from 'next/server'
 interface Golfer {
   id: string;
   first_name: string;
+  middle_name?: string;
   last_name: string;
   suffix?: string;
 }
@@ -52,8 +53,8 @@ export async function GET(request: Request) {
 
     const { data, error } = await supabase
       .from('golfers')
-      .select('id, first_name, last_name, suffix')
-      .or(`first_name.ilike.%${query}%,last_name.ilike.%${query}%,suffix.ilike.%${query}%`)
+      .select('id, first_name, middle_name, last_name, suffix')
+      .or(`first_name.ilike.%${query}%,middle_name.ilike.%${query}%,last_name.ilike.%${query}%,suffix.ilike.%${query}%`)
       .order('last_name')
       .limit(10)
 
@@ -66,10 +67,20 @@ export async function GET(request: Request) {
     }
 
     // Transform the data to match the expected interface
-    const transformedData: TransformedGolfer[] = (data as Golfer[]).map(golfer => ({
-      id: golfer.id,
-      name: `${golfer.first_name} ${golfer.last_name}${golfer.suffix ? ` ${golfer.suffix}` : ''}`
-    }))
+    const transformedData: TransformedGolfer[] = (data as Golfer[]).map(golfer => {
+      const nameParts = [
+        golfer.first_name,
+        golfer.middle_name,
+        golfer.last_name
+      ].filter(Boolean) // Remove any null/undefined/empty parts
+      
+      const fullName = nameParts.join(' ') + (golfer.suffix ? ` ${golfer.suffix}` : '')
+      
+      return {
+        id: golfer.id,
+        name: fullName.trim()
+      }
+    })
 
     console.log('Search results:', transformedData)
     return NextResponse.json(transformedData)
