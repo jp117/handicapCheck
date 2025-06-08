@@ -12,12 +12,23 @@ interface GolferStat {
   postPercentage: number;
 }
 
+interface NotFoundGolfer {
+  member_number: string;
+  status: 'not_in_db';
+}
+
+interface BatchResponse {
+  found: GolferStat[];
+  notFound: NotFoundGolfer[];
+}
+
 export default function TournamentCheckPage() {
   const { data: session, status } = useSession() as { data: Session | null, status: string }
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [memberNumbers, setMemberNumbers] = useState<string[]>([]);
   const [lowPostGolfers, setLowPostGolfers] = useState<GolferStat[]>([]);
+  const [notFoundGolfers, setNotFoundGolfers] = useState<NotFoundGolfer[]>([]);
   const [loadingStats, setLoadingStats] = useState(false);
 
   if (status === 'loading') {
@@ -67,10 +78,12 @@ export default function TournamentCheckPage() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ memberNumbers: numbers })
         });
-        const stats: GolferStat[] = await res.json();
-        setLowPostGolfers(stats.filter(g => g.postPercentage < 80));
+        const response: BatchResponse = await res.json();
+        setLowPostGolfers(response.found.filter(g => g.postPercentage < 80));
+        setNotFoundGolfers(response.notFound);
       } catch {
         setLowPostGolfers([]);
+        setNotFoundGolfers([]);
       } finally {
         setLoadingStats(false);
       }
@@ -111,6 +124,32 @@ export default function TournamentCheckPage() {
           <h2 className="text-lg font-bold mb-2 text-gray-900">Extracted Member Numbers (Column AC):</h2>
           <div className="bg-white rounded p-4 shadow text-gray-900 text-sm max-h-64 overflow-auto">
             {memberNumbers.join(', ')}
+          </div>
+        </div>
+      )}
+      {notFoundGolfers.length > 0 && (
+        <div className="mt-8">
+          <h2 className="text-lg font-bold mb-2 text-red-700">⚠️ Golfers Not in Database</h2>
+          <div className="bg-red-50 border border-red-200 rounded p-4 shadow">
+            <p className="text-sm text-red-600 mb-3">The following member numbers were not found in the database:</p>
+            <div className="overflow-x-auto">
+              <table className="min-w-full bg-white rounded shadow">
+                <thead>
+                  <tr>
+                    <th className="px-4 py-2 text-left text-sm font-semibold text-gray-900">Member #</th>
+                    <th className="px-4 py-2 text-left text-sm font-semibold text-gray-900">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {notFoundGolfers.map(golfer => (
+                    <tr key={golfer.member_number}>
+                      <td className="px-4 py-2 text-gray-900">{golfer.member_number}</td>
+                      <td className="px-4 py-2 text-red-600 font-medium">Not in DB</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}
