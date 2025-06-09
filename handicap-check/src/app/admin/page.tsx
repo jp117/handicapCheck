@@ -222,6 +222,25 @@ export default function AdminPage() {
         <Link href="/" className="inline-block bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold px-4 py-2 rounded transition">← Back to Home</Link>
       </div>
       <h1 className="text-2xl font-bold mb-6">Admin Page</h1>
+      
+      {/* Admin Navigation */}
+      <h2 className="text-xl font-bold mb-4">Admin Tools</h2>
+      <div className="mb-6 flex flex-wrap gap-3">
+        <Link 
+          href="/admin/users" 
+          className="bg-indigo-500 text-white px-4 py-2 rounded hover:bg-indigo-600 transition font-medium"
+        >
+          Manage Users
+        </Link>
+        <Link 
+          href="/admin/golfers" 
+          className="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600 transition font-medium"
+        >
+          Manage Golfers
+        </Link>
+      </div>
+      
+      <h2 className="text-xl font-bold mb-4">Data Operations</h2>
       <div className="space-x-4 flex items-center mb-4">
         <button
           onClick={runMTechAPI}
