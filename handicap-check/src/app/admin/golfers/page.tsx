@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useSession } from 'next-auth/react';
 import Link from 'next/link'
 import type { Session } from 'next-auth';
@@ -54,14 +54,7 @@ export default function GolfersAdminPage() {
   const [showingDuplicates, setShowingDuplicates] = useState<'ghin' | 'member' | null>(null);
   const [hasInitialized, setHasInitialized] = useState(false);
 
-  useEffect(() => {
-    if (session?.user?.isAdmin && !hasInitialized) {
-      setHasInitialized(true);
-      fetchGolfers();
-    }
-  }, [session?.user?.isAdmin, hasInitialized]);
-
-  async function fetchGolfers() {
+  const fetchGolfers = useCallback(async () => {
     setLoading(true);
     setError('');
     setShowingDuplicates(null);
@@ -84,7 +77,14 @@ export default function GolfersAdminPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [searchTerm]);
+
+  useEffect(() => {
+    if (session?.user?.isAdmin && !hasInitialized) {
+      setHasInitialized(true);
+      fetchGolfers();
+    }
+  }, [session?.user?.isAdmin, hasInitialized, fetchGolfers]);
 
   async function findDuplicateGhin() {
     setLoading(true);
@@ -549,8 +549,8 @@ export default function GolfersAdminPage() {
 
       <div className="mt-6 text-sm text-gray-600">
         <p>• Search by name, email, or member number</p>
-        <p>• Use "Duplicate GHIN" to find golfers with the same GHIN number</p>
-        <p>• Use "Duplicate Member #" to find golfers with the same member number</p>
+        <p>• Use &quot;Duplicate GHIN&quot; to find golfers with the same GHIN number</p>
+        <p>• Use &quot;Duplicate Member #&quot; to find golfers with the same member number</p>
         <p>• Duplicate values are highlighted in red when viewing duplicates</p>
         <p>• Showing up to 100 results</p>
         <p>• First name and last name are required fields</p>
