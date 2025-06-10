@@ -35,6 +35,61 @@ export async function GET(request: Request) {
     const search = searchParams.get('search')
     const findDuplicateGhin = searchParams.get('duplicateGhin') === 'true'
     const findDuplicateMember = searchParams.get('duplicateMember') === 'true'
+    const missingEmail = searchParams.get('missingEmail') === 'true'
+    const missingGhin = searchParams.get('missingGhin') === 'true'
+    const missingMember = searchParams.get('missingMember') === 'true'
+
+    // Handle missing data filters
+    if (missingEmail) {
+      const { data: missingEmailGolfers, error } = await supabase
+        .from('golfers')
+        .select('id, first_name, middle_name, last_name, suffix, email, gender, member_number, ghin_number, created_at, updated_at')
+        .or('email.is.null,email.eq.')
+        .order('last_name')
+        .order('first_name')
+        .limit(500) // Higher limit for missing data queries
+
+      if (error) {
+        console.error('Error fetching golfers with missing emails:', error)
+        return NextResponse.json({ error: 'Failed to fetch golfers' }, { status: 500 })
+      }
+
+      return NextResponse.json(missingEmailGolfers)
+    }
+
+    if (missingGhin) {
+      const { data: missingGhinGolfers, error } = await supabase
+        .from('golfers')
+        .select('id, first_name, middle_name, last_name, suffix, email, gender, member_number, ghin_number, created_at, updated_at')
+        .or('ghin_number.is.null,ghin_number.eq.')
+        .order('last_name')
+        .order('first_name')
+        .limit(500) // Higher limit for missing data queries
+
+      if (error) {
+        console.error('Error fetching golfers with missing GHIN numbers:', error)
+        return NextResponse.json({ error: 'Failed to fetch golfers' }, { status: 500 })
+      }
+
+      return NextResponse.json(missingGhinGolfers)
+    }
+
+    if (missingMember) {
+      const { data: missingMemberGolfers, error } = await supabase
+        .from('golfers')
+        .select('id, first_name, middle_name, last_name, suffix, email, gender, member_number, ghin_number, created_at, updated_at')
+        .or('member_number.is.null,member_number.eq.')
+        .order('last_name')
+        .order('first_name')
+        .limit(500) // Higher limit for missing data queries
+
+      if (error) {
+        console.error('Error fetching golfers with missing member numbers:', error)
+        return NextResponse.json({ error: 'Failed to fetch golfers' }, { status: 500 })
+      }
+
+      return NextResponse.json(missingMemberGolfers)
+    }
 
     // Handle duplicate detection
     if (findDuplicateGhin) {

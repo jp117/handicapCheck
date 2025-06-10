@@ -52,12 +52,14 @@ export default function GolfersAdminPage() {
   const [formData, setFormData] = useState<GolferFormData>(emptyFormData);
   const [submitting, setSubmitting] = useState(false);
   const [showingDuplicates, setShowingDuplicates] = useState<'ghin' | 'member' | null>(null);
+  const [showingMissing, setShowingMissing] = useState<'email' | 'ghin' | 'member' | null>(null);
   const [hasInitialized, setHasInitialized] = useState(false);
 
   const fetchGolfers = useCallback(async () => {
     setLoading(true);
     setError('');
     setShowingDuplicates(null);
+    setShowingMissing(null);
     try {
       const url = new URL('/api/admin/golfers', window.location.origin);
       if (searchTerm) {
@@ -102,6 +104,7 @@ export default function GolfersAdminPage() {
       const data = await res.json();
       setGolfers(Array.isArray(data) ? data : []);
       setShowingDuplicates('ghin');
+      setShowingMissing(null);
     } catch (error) {
       console.error('Error finding duplicate GHIN numbers:', error);
       setError(error instanceof Error ? error.message : 'Failed to find duplicates');
@@ -126,9 +129,85 @@ export default function GolfersAdminPage() {
       const data = await res.json();
       setGolfers(Array.isArray(data) ? data : []);
       setShowingDuplicates('member');
+      setShowingMissing(null);
     } catch (error) {
       console.error('Error finding duplicate member numbers:', error);
       setError(error instanceof Error ? error.message : 'Failed to find duplicates');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function findMissingEmail() {
+    setLoading(true);
+    setError('');
+    setSearchTerm('');
+    try {
+      const url = new URL('/api/admin/golfers', window.location.origin);
+      url.searchParams.set('missingEmail', 'true');
+      
+      const res = await fetch(url);
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.error || 'Failed to fetch golfers with missing emails');
+      }
+      const data = await res.json();
+      setGolfers(Array.isArray(data) ? data : []);
+      setShowingMissing('email');
+      setShowingDuplicates(null);
+    } catch (error) {
+      console.error('Error finding golfers with missing emails:', error);
+      setError(error instanceof Error ? error.message : 'Failed to find missing emails');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function findMissingGhin() {
+    setLoading(true);
+    setError('');
+    setSearchTerm('');
+    try {
+      const url = new URL('/api/admin/golfers', window.location.origin);
+      url.searchParams.set('missingGhin', 'true');
+      
+      const res = await fetch(url);
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.error || 'Failed to fetch golfers with missing GHIN numbers');
+      }
+      const data = await res.json();
+      setGolfers(Array.isArray(data) ? data : []);
+      setShowingMissing('ghin');
+      setShowingDuplicates(null);
+    } catch (error) {
+      console.error('Error finding golfers with missing GHIN numbers:', error);
+      setError(error instanceof Error ? error.message : 'Failed to find missing GHIN numbers');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function findMissingMember() {
+    setLoading(true);
+    setError('');
+    setSearchTerm('');
+    try {
+      const url = new URL('/api/admin/golfers', window.location.origin);
+      url.searchParams.set('missingMember', 'true');
+      
+      const res = await fetch(url);
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.error || 'Failed to fetch golfers with missing member numbers');
+      }
+      const data = await res.json();
+      setGolfers(Array.isArray(data) ? data : []);
+      setShowingMissing('member');
+      setShowingDuplicates(null);
+    } catch (error) {
+      console.error('Error finding golfers with missing member numbers:', error);
+      setError(error instanceof Error ? error.message : 'Failed to find missing member numbers');
     } finally {
       setLoading(false);
     }
@@ -141,6 +220,7 @@ export default function GolfersAdminPage() {
   function clearFilters() {
     setSearchTerm('');
     setShowingDuplicates(null);
+    setShowingMissing(null);
     fetchGolfers();
   }
 
@@ -281,24 +361,44 @@ export default function GolfersAdminPage() {
       <h1 className="text-2xl font-bold mb-6">Golfer Management</h1>
       
       {/* Search and Add Controls */}
-      <div className="mb-6 flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
-        <div className="flex gap-2 items-center flex-wrap">
-          <input
-            type="text"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="Search golfers..."
-            className="border border-gray-300 rounded px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-400"
-            onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-            disabled={showingDuplicates !== null}
-          />
+      <div className="mb-6 space-y-4">
+        <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
+          <div className="flex gap-2 items-center flex-wrap">
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="Search golfers..."
+              className="border border-gray-300 rounded px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-400"
+              onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+              disabled={showingDuplicates !== null || showingMissing !== null}
+            />
+            <button
+              onClick={handleSearch}
+              disabled={loading || showingDuplicates !== null || showingMissing !== null}
+              className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 disabled:opacity-50"
+            >
+              Search
+            </button>
+            {(searchTerm || showingDuplicates || showingMissing) && (
+              <button
+                onClick={clearFilters}
+                className="bg-gray-500 text-white px-3 py-2 rounded hover:bg-gray-600"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+          
           <button
-            onClick={handleSearch}
-            disabled={loading || showingDuplicates !== null}
-            className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 disabled:opacity-50"
+            onClick={openAddForm}
+            className="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600 font-medium shrink-0"
           >
-            Search
+            ➕ Add Golfer
           </button>
+        </div>
+        
+        <div className="flex gap-2 items-center flex-wrap">
           <button
             onClick={findDuplicateGhin}
             disabled={loading}
@@ -313,22 +413,28 @@ export default function GolfersAdminPage() {
           >
             🔍 Duplicate Member #
           </button>
-          {(searchTerm || showingDuplicates) && (
-            <button
-              onClick={clearFilters}
-              className="bg-gray-500 text-white px-3 py-2 rounded hover:bg-gray-600"
-            >
-              Clear
-            </button>
-          )}
+          <button
+            onClick={findMissingEmail}
+            disabled={loading}
+            className="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 disabled:opacity-50"
+          >
+            📧 Missing Email
+          </button>
+          <button
+            onClick={findMissingGhin}
+            disabled={loading}
+            className="bg-purple-500 text-white px-4 py-2 rounded hover:bg-purple-600 disabled:opacity-50"
+          >
+            🆔 Missing GHIN
+          </button>
+          <button
+            onClick={findMissingMember}
+            disabled={loading}
+            className="bg-indigo-500 text-white px-4 py-2 rounded hover:bg-indigo-600 disabled:opacity-50"
+          >
+            🔢 Missing Member #
+          </button>
         </div>
-        
-        <button
-          onClick={openAddForm}
-          className="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600 font-medium"
-        >
-          ➕ Add Golfer
-        </button>
       </div>
 
       {/* Show what type of results are being displayed */}
@@ -341,6 +447,22 @@ export default function GolfersAdminPage() {
             {golfers.length === 0 
               ? `No duplicate ${showingDuplicates === 'ghin' ? 'GHIN numbers' : 'member numbers'} found.`
               : `Found ${golfers.length} golfers with duplicate ${showingDuplicates === 'ghin' ? 'GHIN numbers' : 'member numbers'}.`
+            }
+          </p>
+        </div>
+      )}
+
+      {showingMissing && (
+        <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded">
+          <h3 className="font-semibold text-blue-800">
+            {showingMissing === 'email' && '📧 Showing Golfers with Missing Emails'}
+            {showingMissing === 'ghin' && '🆔 Showing Golfers with Missing GHIN Numbers'}
+            {showingMissing === 'member' && '🔢 Showing Golfers with Missing Member Numbers'}
+          </h3>
+          <p className="text-sm text-blue-700">
+            {golfers.length === 0 
+              ? `No golfers with missing ${showingMissing === 'email' ? 'emails' : showingMissing === 'ghin' ? 'GHIN numbers' : 'member numbers'} found.`
+              : `Found ${golfers.length} golfers with missing ${showingMissing === 'email' ? 'emails' : showingMissing === 'ghin' ? 'GHIN numbers' : 'member numbers'} (showing up to 500 results).`
             }
           </p>
         </div>
@@ -375,17 +497,22 @@ export default function GolfersAdminPage() {
                   const duplicateValues = getDuplicateValues();
                   const hasGhinDuplicate = showingDuplicates === 'ghin' && golfer.ghin_number && duplicateValues.ghin.has(golfer.ghin_number.toString().trim());
                   const hasMemberDuplicate = showingDuplicates === 'member' && golfer.member_number && duplicateValues.member.has(golfer.member_number.toString().trim());
-                  const isHighlighted = hasGhinDuplicate || hasMemberDuplicate;
+                  const hasEmailMissing = showingMissing === 'email' && (!golfer.email || golfer.email.trim() === '');
+                  const hasGhinMissing = showingMissing === 'ghin' && (!golfer.ghin_number || golfer.ghin_number.toString().trim() === '');
+                  const hasMemberMissing = showingMissing === 'member' && (!golfer.member_number || golfer.member_number.toString().trim() === '');
+                  const isHighlighted = hasGhinDuplicate || hasMemberDuplicate || hasEmailMissing || hasGhinMissing || hasMemberMissing;
                   
                   return (
-                    <tr key={golfer.id} className={`hover:bg-gray-50 ${isHighlighted ? 'bg-red-50' : ''}`}>
+                    <tr key={golfer.id} className={`hover:bg-gray-50 ${isHighlighted ? (showingDuplicates ? 'bg-red-50' : 'bg-blue-50') : ''}`}>
                       <td className="border px-4 py-2 font-medium">{formatName(golfer)}</td>
-                      <td className="border px-4 py-2">{golfer.email || '-'}</td>
+                      <td className={`border px-4 py-2 ${hasEmailMissing ? 'bg-blue-200 font-bold' : ''}`}>
+                        {golfer.email || '-'}
+                      </td>
                       <td className="border px-4 py-2 text-center">{golfer.gender || '-'}</td>
-                      <td className={`border px-4 py-2 ${hasMemberDuplicate ? 'bg-red-200 font-bold' : ''}`}>
+                      <td className={`border px-4 py-2 ${hasMemberDuplicate ? 'bg-red-200 font-bold' : hasMemberMissing ? 'bg-blue-200 font-bold' : ''}`}>
                         {golfer.member_number || '-'}
                       </td>
-                      <td className={`border px-4 py-2 ${hasGhinDuplicate ? 'bg-red-200 font-bold' : ''}`}>
+                      <td className={`border px-4 py-2 ${hasGhinDuplicate ? 'bg-red-200 font-bold' : hasGhinMissing ? 'bg-blue-200 font-bold' : ''}`}>
                         {golfer.ghin_number || '-'}
                       </td>
                       <td className="border px-4 py-2 text-center">
@@ -553,8 +680,12 @@ export default function GolfersAdminPage() {
         <p>• Search by name, email, or member number</p>
         <p>• Use &quot;Duplicate GHIN&quot; to find golfers with the same GHIN number</p>
         <p>• Use &quot;Duplicate Member #&quot; to find golfers with the same member number</p>
+        <p>• Use &quot;Missing Email&quot; to find golfers without email addresses</p>
+        <p>• Use &quot;Missing GHIN&quot; to find golfers without GHIN numbers</p>
+        <p>• Use &quot;Missing Member #&quot; to find golfers without member numbers</p>
         <p>• Duplicate values are highlighted in red when viewing duplicates</p>
-        <p>• Showing up to 100 results</p>
+        <p>• Missing values are highlighted in blue when viewing missing data</p>
+        <p>• Regular search shows up to 100 results, missing data filters show up to 500 results</p>
         <p>• First name and last name are required fields</p>
       </div>
     </div>
