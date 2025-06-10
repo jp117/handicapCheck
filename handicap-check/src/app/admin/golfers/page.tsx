@@ -357,57 +357,59 @@ export default function GolfersAdminPage() {
       {loading ? (
         <div className="text-center py-8">Loading golfers...</div>
       ) : (
-        <div className="bg-white rounded-lg shadow overflow-hidden">
-          <table className="w-full">
-            <thead className="bg-gray-200">
-              <tr>
-                <th className="border px-4 py-2 text-left">Name</th>
-                <th className="border px-4 py-2 text-left">Email</th>
-                <th className="border px-4 py-2 text-center">Gender</th>
-                <th className="border px-4 py-2 text-left">Member #</th>
-                <th className="border px-4 py-2 text-left">GHIN #</th>
-                <th className="border px-4 py-2 text-center">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {golfers.map(golfer => {
-                const duplicateValues = getDuplicateValues();
-                const hasGhinDuplicate = showingDuplicates === 'ghin' && golfer.ghin_number && duplicateValues.ghin.has(golfer.ghin_number.toString().trim());
-                const hasMemberDuplicate = showingDuplicates === 'member' && golfer.member_number && duplicateValues.member.has(golfer.member_number.toString().trim());
-                const isHighlighted = hasGhinDuplicate || hasMemberDuplicate;
-                
-                return (
-                  <tr key={golfer.id} className={`hover:bg-gray-50 ${isHighlighted ? 'bg-red-50' : ''}`}>
-                    <td className="border px-4 py-2 font-medium">{formatName(golfer)}</td>
-                    <td className="border px-4 py-2">{golfer.email || '-'}</td>
-                    <td className="border px-4 py-2 text-center">{golfer.gender || '-'}</td>
-                    <td className={`border px-4 py-2 ${hasMemberDuplicate ? 'bg-red-200 font-bold' : ''}`}>
-                      {golfer.member_number || '-'}
-                    </td>
-                    <td className={`border px-4 py-2 ${hasGhinDuplicate ? 'bg-red-200 font-bold' : ''}`}>
-                      {golfer.ghin_number || '-'}
-                    </td>
-                    <td className="border px-4 py-2 text-center">
-                      <div className="flex gap-2 justify-center">
-                        <button
-                          onClick={() => openEditForm(golfer)}
-                          className="bg-blue-500 text-white px-3 py-1 rounded text-sm hover:bg-blue-600"
-                        >
-                          Edit
-                        </button>
-                        <button
-                          onClick={() => deleteGolfer(golfer)}
-                          className="bg-red-500 text-white px-3 py-1 rounded text-sm hover:bg-red-600"
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+        <div className="bg-white rounded-lg shadow overflow-x-auto">
+          <div className="min-w-full">
+            <table className="w-full">
+              <thead className="bg-gray-200">
+                <tr>
+                  <th className="border px-4 py-2 text-left whitespace-nowrap">Name</th>
+                  <th className="border px-4 py-2 text-left whitespace-nowrap">Email</th>
+                  <th className="border px-4 py-2 text-center whitespace-nowrap">Gender</th>
+                  <th className="border px-4 py-2 text-left whitespace-nowrap">Member #</th>
+                  <th className="border px-4 py-2 text-left whitespace-nowrap">GHIN #</th>
+                  <th className="border px-4 py-2 text-center whitespace-nowrap">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {golfers.map(golfer => {
+                  const duplicateValues = getDuplicateValues();
+                  const hasGhinDuplicate = showingDuplicates === 'ghin' && golfer.ghin_number && duplicateValues.ghin.has(golfer.ghin_number.toString().trim());
+                  const hasMemberDuplicate = showingDuplicates === 'member' && golfer.member_number && duplicateValues.member.has(golfer.member_number.toString().trim());
+                  const isHighlighted = hasGhinDuplicate || hasMemberDuplicate;
+                  
+                  return (
+                    <tr key={golfer.id} className={`hover:bg-gray-50 ${isHighlighted ? 'bg-red-50' : ''}`}>
+                      <td className="border px-4 py-2 font-medium">{formatName(golfer)}</td>
+                      <td className="border px-4 py-2">{golfer.email || '-'}</td>
+                      <td className="border px-4 py-2 text-center">{golfer.gender || '-'}</td>
+                      <td className={`border px-4 py-2 ${hasMemberDuplicate ? 'bg-red-200 font-bold' : ''}`}>
+                        {golfer.member_number || '-'}
+                      </td>
+                      <td className={`border px-4 py-2 ${hasGhinDuplicate ? 'bg-red-200 font-bold' : ''}`}>
+                        {golfer.ghin_number || '-'}
+                      </td>
+                      <td className="border px-4 py-2 text-center">
+                        <div className="flex gap-2 justify-center whitespace-nowrap">
+                          <button
+                            onClick={() => openEditForm(golfer)}
+                            className="bg-blue-500 text-white px-3 py-1 rounded text-sm hover:bg-blue-600"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => deleteGolfer(golfer)}
+                            className="bg-red-500 text-white px-3 py-1 rounded text-sm hover:bg-red-600"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
           
           {golfers.length === 0 && !loading && (
             <div className="text-center py-8 text-gray-500">

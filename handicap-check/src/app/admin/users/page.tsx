@@ -143,66 +143,68 @@ export default function UsersAdminPage() {
       {loading ? (
         <div className="text-center py-8">Loading users...</div>
       ) : (
-        <div className="bg-white rounded-lg shadow overflow-hidden">
-          <table className="w-full">
-            <thead className="bg-gray-200">
-              <tr>
-                <th className="border px-4 py-2 text-left">Email</th>
-                <th className="border px-4 py-2 text-left">Name</th>
-                <th className="border px-4 py-2 text-center">Admin</th>
-                <th className="border px-4 py-2 text-center">Approved</th>
-                <th className="border px-4 py-2 text-left">Created</th>
-                <th className="border px-4 py-2 text-center">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {users.map(user => (
-                <tr key={user.id} className="hover:bg-gray-50">
-                  <td className="border px-4 py-2">{user.email}</td>
-                  <td className="border px-4 py-2">{user.name || '-'}</td>
-                  <td className="border px-4 py-2 text-center">
-                    <button
-                      onClick={() => updateUser(user.id, { is_admin: !user.is_admin })}
-                      disabled={updatingUser === user.id}
-                      className={`px-3 py-1 rounded text-sm font-medium ${
-                        user.is_admin 
-                          ? 'bg-green-100 text-green-800 hover:bg-green-200' 
-                          : 'bg-gray-100 text-gray-800 hover:bg-gray-200'
-                      } disabled:opacity-50`}
-                    >
-                      {user.is_admin ? 'Yes' : 'No'}
-                    </button>
-                  </td>
-                  <td className="border px-4 py-2 text-center">
-                    <button
-                      onClick={() => updateUser(user.id, { is_approved: !user.is_approved })}
-                      disabled={updatingUser === user.id}
-                      className={`px-3 py-1 rounded text-sm font-medium ${
-                        user.is_approved 
-                          ? 'bg-green-100 text-green-800 hover:bg-green-200' 
-                          : 'bg-red-100 text-red-800 hover:bg-red-200'
-                      } disabled:opacity-50`}
-                    >
-                      {user.is_approved ? 'Yes' : 'No'}
-                    </button>
-                  </td>
-                  <td className="border px-4 py-2">
-                    {new Date(user.created_at).toLocaleDateString()}
-                  </td>
-                  <td className="border px-4 py-2 text-center">
-                    <button
-                      onClick={() => deleteUser(user.id, user.email)}
-                      disabled={updatingUser === user.id || user.email === session?.user?.email}
-                      className="bg-red-500 text-white px-3 py-1 rounded text-sm hover:bg-red-600 disabled:opacity-50"
-                      title={user.email === session?.user?.email ? "Cannot delete your own account" : "Delete user"}
-                    >
-                      Delete
-                    </button>
-                  </td>
+        <div className="bg-white rounded-lg shadow overflow-x-auto">
+          <div className="min-w-full">
+            <table className="w-full">
+              <thead className="bg-gray-200">
+                <tr>
+                  <th className="border px-4 py-2 text-left whitespace-nowrap">Email</th>
+                  <th className="border px-4 py-2 text-left whitespace-nowrap">Name</th>
+                  <th className="border px-4 py-2 text-center whitespace-nowrap">Admin</th>
+                  <th className="border px-4 py-2 text-center whitespace-nowrap">Approved</th>
+                  <th className="border px-4 py-2 text-left whitespace-nowrap">Created</th>
+                  <th className="border px-4 py-2 text-center whitespace-nowrap">Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {users.map(user => (
+                  <tr key={user.id} className="hover:bg-gray-50">
+                    <td className="border px-4 py-2">{user.email}</td>
+                    <td className="border px-4 py-2">{user.name || '-'}</td>
+                    <td className="border px-4 py-2 text-center">
+                      <button
+                        onClick={() => updateUser(user.id, { is_admin: !user.is_admin })}
+                        disabled={updatingUser === user.id}
+                        className={`px-3 py-1 rounded text-sm font-medium ${
+                          user.is_admin 
+                            ? 'bg-green-100 text-green-800 hover:bg-green-200' 
+                            : 'bg-gray-100 text-gray-800 hover:bg-gray-200'
+                        } disabled:opacity-50`}
+                      >
+                        {user.is_admin ? 'Yes' : 'No'}
+                      </button>
+                    </td>
+                    <td className="border px-4 py-2 text-center">
+                      <button
+                        onClick={() => updateUser(user.id, { is_approved: !user.is_approved })}
+                        disabled={updatingUser === user.id}
+                        className={`px-3 py-1 rounded text-sm font-medium ${
+                          user.is_approved 
+                            ? 'bg-green-100 text-green-800 hover:bg-green-200' 
+                            : 'bg-red-100 text-red-800 hover:bg-red-200'
+                        } disabled:opacity-50`}
+                      >
+                        {user.is_approved ? 'Yes' : 'No'}
+                      </button>
+                    </td>
+                    <td className="border px-4 py-2 whitespace-nowrap">
+                      {new Date(user.created_at).toLocaleDateString()}
+                    </td>
+                    <td className="border px-4 py-2 text-center">
+                      <button
+                        onClick={() => deleteUser(user.id, user.email)}
+                        disabled={updatingUser === user.id || user.email === session?.user?.email}
+                        className="bg-red-500 text-white px-3 py-1 rounded text-sm hover:bg-red-600 disabled:opacity-50"
+                        title={user.email === session?.user?.email ? "Cannot delete your own account" : "Delete user"}
+                      >
+                        Delete
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
           
           {users.length === 0 && !loading && (
             <div className="text-center py-8 text-gray-500">
