@@ -165,6 +165,11 @@ export async function GET(request: Request) {
       )
     }
 
+    // Exclude golfers without GHIN numbers since they can't post scores
+    filteredTeeTimesData = filteredTeeTimesData.filter((teeTime: TeeTimeData) => 
+      teeTime.golfer && teeTime.golfer.ghin_number && teeTime.golfer.ghin_number.trim() !== ''
+    )
+
     // Group by golfer and calculate statistics
     const golferStats = new Map<string, GolferStatsData>()
 

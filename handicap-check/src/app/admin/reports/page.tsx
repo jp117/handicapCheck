@@ -417,6 +417,7 @@ export default function GolferReportsPage() {
           <div className="mt-6 text-sm text-gray-600">
             <p>• Report shows golfers sorted by posting percentage (worst performers first)</p>
             <p>• Posting percentage excludes excused rounds (solo play, etc.)</p>
+            <p>• Only includes golfers with GHIN numbers (required for posting)</p>
             <p>• Poor performers: &lt;80% posting rate with 5+ rounds</p>
             <p>• Good performers: ≥90% posting rate with 5+ rounds</p>
             <p>• Click &ldquo;Show&rdquo; to see recent round activity for each golfer</p>
