@@ -238,6 +238,12 @@ export default function AdminPage() {
         >
           Manage Golfers
         </Link>
+        <Link 
+          href="/admin/reports" 
+          className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 transition font-medium"
+        >
+          Golfer Reports
+        </Link>
       </div>
       
       <h2 className="text-xl font-bold mb-4">Data Operations</h2>
