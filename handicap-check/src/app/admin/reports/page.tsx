@@ -369,7 +369,7 @@ export default function GolferReportsPage() {
 
           <div className="mb-4 text-xs text-gray-500">
             <p>• <strong>Export to CSV:</strong> Summary report with posting percentages and totals</p>
-            <p>• <strong>Export Detailed CSV:</strong> One row per golfer with all unexcused no post dates in separate columns</p>
+            <p>• <strong>Export Detailed CSV:</strong> First Name, Last Name, Member #, Posting %, then all unexcused no post dates in separate columns</p>
           </div>
 
           {/* Report Table */}

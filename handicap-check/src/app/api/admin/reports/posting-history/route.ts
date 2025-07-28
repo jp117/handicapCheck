@@ -325,7 +325,7 @@ export async function GET(request: Request) {
       })
 
       // Create dynamic headers
-      const csvHeaders = ['Name', 'Member Number']
+      const csvHeaders = ['First Name', 'Last Name', 'Member Number', 'Posting Percentage']
       for (let i = 1; i <= maxUnexcusedDates; i++) {
         csvHeaders.push(`Unexcused Date ${i}`)
       }
@@ -334,10 +334,21 @@ export async function GET(request: Request) {
       
       reportData.forEach(golfer => {
         const unexcusedDates = golferUnexcusedData.get(golfer.golfer_id) || []
+        const golferData = golferStats.get(golfer.golfer_id)
+        
+        // Extract first and last name from the golfer data
+        let firstName = ''
+        let lastName = ''
+        if (golferData) {
+          firstName = golferData.golfer.first_name || ''
+          lastName = golferData.golfer.last_name || ''
+        }
         
         const row = [
-          golfer.golfer_name,
-          golfer.member_number || ''
+          firstName,
+          lastName,
+          golfer.member_number || '',
+          `${golfer.posting_percentage}%`
         ]
         
         // Add all unexcused dates, padding with empty strings if needed
