@@ -300,6 +300,66 @@ export async function GET(request: Request) {
       })
     }
 
+    // Handle detailed CSV export with individual unexcused no post dates
+    if (format === 'csv-detailed') {
+      // First, determine the maximum number of unexcused dates any golfer has
+      let maxUnexcusedDates = 0
+      const golferUnexcusedData = new Map<string, string[]>()
+      
+      reportData.forEach(golfer => {
+        const golferData = golferStats.get(golfer.golfer_id)
+        if (golferData) {
+          // Get all unexcused no post rounds
+          const unexcusedRounds = golferData.rounds.filter(round => 
+            round.posting_status === 'unexcused_no_post'
+          )
+          
+          // Sort by date descending and extract just the dates
+          const unexcusedDates = unexcusedRounds
+            .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+            .map(round => round.date)
+          
+          golferUnexcusedData.set(golfer.golfer_id, unexcusedDates)
+          maxUnexcusedDates = Math.max(maxUnexcusedDates, unexcusedDates.length)
+        }
+      })
+
+      // Create dynamic headers
+      const csvHeaders = ['Name', 'Member Number']
+      for (let i = 1; i <= maxUnexcusedDates; i++) {
+        csvHeaders.push(`Unexcused Date ${i}`)
+      }
+
+      const csvRows: string[][] = []
+      
+      reportData.forEach(golfer => {
+        const unexcusedDates = golferUnexcusedData.get(golfer.golfer_id) || []
+        
+        const row = [
+          golfer.golfer_name,
+          golfer.member_number || ''
+        ]
+        
+        // Add all unexcused dates, padding with empty strings if needed
+        for (let i = 0; i < maxUnexcusedDates; i++) {
+          row.push(unexcusedDates[i] || '')
+        }
+        
+        csvRows.push(row)
+      })
+
+      const csvContent = [csvHeaders, ...csvRows]
+        .map(row => row.map(cell => `"${cell}"`).join(','))
+        .join('\n')
+
+      return new NextResponse(csvContent, {
+        headers: {
+          'Content-Type': 'text/csv',
+          'Content-Disposition': 'attachment; filename="posting-history-detailed-report.csv"'
+        }
+      })
+    }
+
     // Calculate summary statistics
     const totalGolfers = reportData.length
     const totalRounds = reportData.reduce((sum, golfer) => sum + golfer.total_rounds, 0)

@@ -128,6 +128,26 @@ export default function GolferReportsPage() {
     document.body.removeChild(link);
   }
 
+  async function exportDetailedToCsv() {
+    const params = new URLSearchParams();
+    if (startDate) params.set('startDate', startDate);
+    if (endDate) params.set('endDate', endDate);
+    if (search) params.set('search', search);
+    if (minRounds) params.set('minRounds', minRounds);
+    if (gender) params.set('gender', gender);
+    params.set('format', 'csv-detailed');
+
+    const url = `/api/admin/reports/posting-history?${params}`;
+    
+    // Create a temporary link and click it to download
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'posting-history-detailed-report.csv';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
+
   function toggleRowExpansion(golferId: string) {
     const newExpanded = new Set(expandedRows);
     if (newExpanded.has(golferId)) {
@@ -331,12 +351,25 @@ export default function GolferReportsPage() {
             <p className="text-sm text-gray-600">
               Showing {reportData.golfers.length} golfers from {reportData.summary.dateRange.startDate} to {reportData.summary.dateRange.endDate}
             </p>
-            <button
-              onClick={exportToCsv}
-              className="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600 text-sm font-medium"
-            >
-              📊 Export to CSV
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={exportToCsv}
+                className="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600 text-sm font-medium"
+              >
+                📊 Export to CSV
+              </button>
+              <button
+                onClick={exportDetailedToCsv}
+                className="bg-purple-500 text-white px-4 py-2 rounded hover:bg-purple-600 text-sm font-medium"
+              >
+                📄 Export Detailed CSV
+              </button>
+            </div>
+          </div>
+
+          <div className="mb-4 text-xs text-gray-500">
+            <p>• <strong>Export to CSV:</strong> Summary report with posting percentages and totals</p>
+            <p>• <strong>Export Detailed CSV:</strong> One row per golfer with all unexcused no post dates in separate columns</p>
           </div>
 
           {/* Report Table */}
